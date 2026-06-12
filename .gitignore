@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+brainfump_data/
+*.db
