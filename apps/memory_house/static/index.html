@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BrainFump · Memory House</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a2129; --border: #2c3640;
+      --text: #e6e8ea; --muted: #8b98a5; --accent: #56d364;
+      --ok: #2ea44f; --warn: #d29922; --block: #da3633; --review: #a371f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+    header h1 { font-size: 1.15rem; margin: 0; }
+    header .sub { color: var(--muted); font-size: .85rem; }
+    main { display: grid; grid-template-columns: 280px 1fr; gap: 1rem; padding: 1rem 1.5rem; max-width: 1200px; margin: 0 auto; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    section h2 { font-size: .95rem; margin: 0 0 .75rem; color: var(--accent); }
+    .room { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .6rem .8rem; margin-bottom: .4rem; cursor: pointer; font-size: .9rem; }
+    .room.active { border-color: var(--accent); }
+    .room .badges { font-size: .75rem; color: var(--muted); }
+    .toggle { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; font-size: .85rem; }
+    .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .actions button { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .55rem .8rem; cursor: pointer; font-size: .85rem; }
+    .actions button:hover { border-color: var(--accent); }
+    .gate { margin-top: .8rem; border-radius: 6px; padding: .7rem .9rem; font-size: .85rem; display: none; border: 1px solid; }
+    .gate.allow { display: block; border-color: var(--ok); }
+    .gate.warn { display: block; border-color: var(--warn); }
+    .gate.require_review { display: block; border-color: var(--review); }
+    .gate.block, .gate.suggest_alternative { display: block; border-color: var(--block); }
+    .gate .mode { font-weight: 700; text-transform: uppercase; font-size: .75rem; letter-spacing: .05em; }
+    .gate ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+    .card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: .5rem .75rem; margin-bottom: .45rem; font-size: .8rem; }
+    .card.failure, .card.risk { border-left-color: var(--block); }
+    .card.governance { border-left-color: var(--review); }
+    .card .type { font-size: .66rem; text-transform: uppercase; color: var(--muted); letter-spacing: .05em; }
+    .event { font-size: .76rem; padding: .3rem 0; border-bottom: 1px solid var(--border); }
+    .event .meta { color: var(--muted); }
+    #memory-list { max-height: 260px; overflow-y: auto; margin-top: .5rem; }
+    #event-list { max-height: 200px; overflow-y: auto; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+    @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏠 BrainFump · Memory House</h1>
+    <span class="sub">Das Haus, das sich erinnert — und Konsequenzen zieht, bevor es handelt.</span>
+  </header>
+  <main>
+    <section>
+      <h2>Räume</h2>
+      <div id="room-list"></div>
+      <div class="toggle">
+        <input type="checkbox" id="call-active">
+        <label for="call-active">📞 Homeoffice-Call läuft</label>
+      </div>
+    </section>
+    <div>
+      <section>
+        <h2 id="room-title">Aktionen</h2>
+        <div class="actions">
+          <button data-action="heizung_24_um_6" data-kind="signature">🔥 Heizung 24° um 6:00</button>
+          <button data-action="staubsaugen">🧹 Staubsaugen</button>
+          <button data-action="licht_an">💡 Licht an</button>
+          <button data-action="sicherung_hauptkasten" data-kind="device">⚡ Sicherung schalten</button>
+          <button data-action="tuer_entriegeln">🚪 Tür entriegeln</button>
+          <button data-action="rolllaeden_runter">🪟 Rollläden runter</button>
+        </div>
+        <div class="gate" id="gate-card"></div>
+      </section>
+      <div class="cols">
+        <section>
+          <h2>Gedächtnis dieses Raums</h2>
+          <div id="memory-list"></div>
+        </section>
+        <section>
+          <h2>Letzte Ereignisse</h2>
+          <div id="event-list"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -51,6 +51,13 @@ class BrainFumpKernel:
         self.retriever = Retriever(self.cards)
         self.consolidator = Consolidator(self.cards)
 
+        # Regeln leben im RAM — nach einem Neustart werden sie aus den
+        # persistierten correction-Events deterministisch rekompiliert.
+        for event in self.events.query(event_type="correction"):
+            rule = self.compiler.compile_correction(event)
+            if rule is not None:
+                self.checker.add_rule(rule)
+
     # -- Schreiben -----------------------------------------------------------
 
     def record(self, event_type: str, content: str, **kwargs: Any) -> Event:

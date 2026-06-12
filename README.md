@@ -81,16 +81,16 @@ curl -X POST http://127.0.0.1:8080/api/gatekeeper/check \
 
 Auf dem Kernel aufbauende Subprojekte, ausgeliefert über Docker Compose:
 
-| App | Port | Status | Beschreibung |
-|---|---|---|---|
-| [`apps/prompt_optimizer`](apps/prompt_optimizer/) | 8030 | ✅ | Prompt-Testlabor mit Langzeitgedächtnis: blockt gescheiterte Varianten, kompiliert Stil-Korrekturen zu Output-Checks |
-| `apps/agentic_akte` | 8010 | geplant | Aktenbasierter Agent mit Gedächtnis-Gate |
-| `apps/coding_agent_guard` | 8020 | geplant | MCP-/HTTP-Wächter für Coding Agents (PROJECTMEM) |
-| `apps/memory_house` | 8040 | geplant | Das Haus, das sich erinnert 🏠 |
+| App | Port | Beschreibung |
+|---|---|---|
+| [`apps/agentic_akte`](apps/agentic_akte/) | 8010 | Aktenführung mit Gedächtnis-Gate: fragile Dokumente, Fristen, verworfene Analysen, globale DNA, UI-Warnkarte |
+| [`apps/coding_agent_guard`](apps/coding_agent_guard/) | 8020 | PROJECTMEM-Wächter für Coding Agents: Pre-Edit Gate, Kontext-Summary, fertiger Claude-Code-Hook |
+| [`apps/prompt_optimizer`](apps/prompt_optimizer/) | 8030 | Prompt-Testlabor mit Langzeitgedächtnis: blockt gescheiterte Varianten, kompiliert Stil-Korrekturen zu Output-Checks |
+| [`apps/memory_house`](apps/memory_house/) | 8040 | Das Haus, das sich erinnert 🏠 — Räume als Akten, Hausregeln als Runtime-Checks |
 
 ```bash
-docker compose up -d prompt-optimizer
-# → http://localhost:8030
+docker compose up -d          # alle vier Apps
+docker compose up -d memory-house   # oder einzeln
 ```
 
 ## Tests

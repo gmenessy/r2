@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BrainFump · Agentische Akte</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a2129; --border: #2c3640;
+      --text: #e6e8ea; --muted: #8b98a5; --accent: #e3b341;
+      --ok: #2ea44f; --warn: #d29922; --block: #da3633; --review: #a371f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+    header h1 { font-size: 1.15rem; margin: 0; }
+    header .sub { color: var(--muted); font-size: .85rem; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding: 1rem 1.5rem; max-width: 1200px; margin: 0 auto; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    section h2 { font-size: .95rem; margin: 0 0 .75rem; color: var(--accent); }
+    label { display: block; font-size: .8rem; color: var(--muted); margin: .5rem 0 .2rem; }
+    input, textarea, select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .5rem; font-family: inherit; font-size: .9rem; }
+    button { margin-top: .7rem; background: var(--accent); color: #1a1206; border: 0; border-radius: 6px; padding: .5rem .9rem; font-size: .85rem; cursor: pointer; font-weight: 600; }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 400; }
+    .row { display: flex; gap: .6rem; }
+    .row > div { flex: 1; }
+    .check { display: flex; align-items: center; gap: .4rem; margin-top: .5rem; font-size: .85rem; }
+    .check input { width: auto; }
+    .gate { margin-top: .8rem; border-radius: 6px; padding: .7rem .9rem; font-size: .85rem; display: none; border: 1px solid; }
+    .gate.allow { display: block; border-color: var(--ok); }
+    .gate.warn { display: block; border-color: var(--warn); }
+    .gate.require_review { display: block; border-color: var(--review); }
+    .gate.block, .gate.suggest_alternative { display: block; border-color: var(--block); }
+    .gate .mode { font-weight: 700; text-transform: uppercase; font-size: .75rem; letter-spacing: .05em; }
+    .gate ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+    .card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: .55rem .8rem; margin-bottom: .5rem; font-size: .82rem; }
+    .card.failure, .card.risk { border-left-color: var(--block); }
+    .card.governance { border-left-color: var(--review); }
+    .card.semantic { border-left-color: var(--ok); }
+    .card.episodic { border-left-color: var(--muted); }
+    .card .type { font-size: .68rem; text-transform: uppercase; color: var(--muted); letter-spacing: .05em; }
+    .deadline { display: flex; justify-content: space-between; gap: .5rem; padding: .4rem .6rem; border-radius: 6px; border: 1px solid var(--border); margin-bottom: .4rem; font-size: .82rem; }
+    .deadline.overdue { border-color: var(--block); }
+    .event { font-size: .78rem; padding: .35rem 0; border-bottom: 1px solid var(--border); }
+    .event .meta { color: var(--muted); }
+    #timeline-list, #memory-list { max-height: 320px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📁 BrainFump · Agentische Akte</h1>
+    <span class="sub">Jede Akte hat ihr eigenes Gedächtnis — und zieht Konsequenzen daraus.</span>
+    <span style="flex:1"></span>
+    <label style="margin:0; display:flex; align-items:center; gap:.4rem;">Akte
+      <input id="case" value="akte_demo" list="case-list" style="width:170px">
+      <datalist id="case-list"></datalist>
+    </label>
+  </header>
+  <main>
+    <section>
+      <h2>Aktion prüfen (Memory Gatekeeper)</h2>
+      <div class="row">
+        <div>
+          <label for="action-type">Aktion</label>
+          <select id="action-type">
+            <option value="modify_document">Dokument ändern</option>
+            <option value="send_draft">Entwurf versenden</option>
+            <option value="delete_document">Dokument löschen</option>
+            <option value="apply_analysis">Analyse anwenden</option>
+          </select>
+        </div>
+        <div>
+          <label for="action-docs">Betroffene Dokumente (Komma-getrennt)</label>
+          <input id="action-docs" placeholder="vertrag_original.pdf">
+        </div>
+      </div>
+      <label for="action-signature">Analyse-/Fehler-Signatur (optional)</label>
+      <input id="action-signature" placeholder="auslegung_§5_variante_a">
+      <button id="btn-check">Gatekeeper fragen</button>
+      <div class="gate" id="gate-card"></div>
+    </section>
+
+    <section>
+      <h2>Fristen</h2>
+      <div class="row">
+        <div>
+          <label for="deadline-desc">Beschreibung</label>
+          <input id="deadline-desc" placeholder="Stellungnahme einreichen">
+        </div>
+        <div>
+          <label for="deadline-date">Fällig am</label>
+          <input id="deadline-date" type="date">
+        </div>
+      </div>
+      <button id="btn-deadline">Frist anlegen</button>
+      <div id="deadline-list" style="margin-top:.8rem"></div>
+    </section>
+
+    <section>
+      <h2>Dokument erfassen</h2>
+      <label for="doc-name">Name</label>
+      <input id="doc-name" placeholder="vertrag_original.pdf">
+      <label for="doc-summary">Kurzbeschreibung / Stand</label>
+      <input id="doc-summary" placeholder="Unterschriebener Originalvertrag v2">
+      <div class="check">
+        <input id="doc-fragile" type="checkbox">
+        <label for="doc-fragile" style="margin:0">Geschützt — Änderung nur nach Review</label>
+      </div>
+      <button id="btn-doc">Dokument erfassen</button>
+      <hr style="border-color: var(--border); margin: 1rem 0;">
+      <label for="decision-text">Entscheidung festhalten</label>
+      <input id="decision-text" placeholder="Frontend bleibt Vanilla JS.">
+      <button class="secondary" id="btn-decision">Entscheidung speichern</button>
+      <label for="failed-text" style="margin-top:.8rem">Verworfene Analyse (wird nie wiederholt)</label>
+      <input id="failed-text" placeholder="Auslegung über §5 Abs. 2 trägt nicht.">
+      <div class="row">
+        <div>
+          <label for="failed-signature">Signatur</label>
+          <input id="failed-signature" placeholder="auslegung_§5_variante_a">
+        </div>
+        <div>
+          <label for="failed-alternative">Alternative (optional)</label>
+          <input id="failed-alternative" placeholder="Über §7 argumentieren">
+        </div>
+      </div>
+      <button class="secondary" id="btn-failed">Verworfene Analyse speichern</button>
+    </section>
+
+    <section>
+      <h2>Memory Cards <button class="secondary" id="btn-consolidate" style="margin:0;float:right;font-size:.72rem">Konsolidieren</button></h2>
+      <div id="memory-list"></div>
+    </section>
+
+    <section style="grid-column: 1 / -1;">
+      <h2>Aktenhistorie (append-only Event Log)</h2>
+      <div id="timeline-list"></div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

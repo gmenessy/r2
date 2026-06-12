@@ -8,7 +8,6 @@ Compliance wird geschlossen, indem Regeln vor Task-Abschluss geprüft werden.
 from __future__ import annotations
 
 import re
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -79,9 +78,11 @@ class RuleCompiler:
         if event.case_id is not None:
             condition["case_id"] = event.case_id
 
+        # Deterministische rule_id, damit die Rekompilierung beim Neustart
+        # dieselben Regeln erzeugt.
         slug = "_".join(sorted(set(forbidden)))
         return Rule(
-            rule_id=f"no_{slug}_{uuid.uuid4().hex[:6]}",
+            rule_id=f"no_{slug}_{event.event_id[-6:]}",
             condition=condition,
             check={"package_json_must_not_contain": sorted(set(forbidden))},
             severity=event.payload.get("severity", "warning"),

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import re
-import uuid
 from typing import Any
 
 from brainfump import BrainFumpKernel
@@ -30,6 +29,10 @@ class PromptOptimizer:
     def __init__(self, kernel: BrainFumpKernel, success_threshold: float = 0.7) -> None:
         self.kernel = kernel
         self.success_threshold = success_threshold
+        # Output-Regeln nach Neustart aus persistierten Korrekturen rekompilieren.
+        for event in self.kernel.events.query(event_type="correction"):
+            if "output_checks" in event.payload:
+                self._compile_output_rules(event)
 
     # -- Pre-Test Gate ---------------------------------------------------------
 
@@ -134,32 +137,44 @@ class PromptOptimizer:
         must_not_contain: list[str] | None = None,
         severity: str = "warning",
     ) -> dict[str, Any]:
-        """Tonalitäts-/Stil-Korrektur loggen und als Output-Check kompilieren."""
+        """Tonalitäts-/Stil-Korrektur loggen und als Output-Check kompilieren.
+
+        Die Check-Definition wandert mit ins Event-Payload, damit Regeln
+        nach einem Neustart rekompiliert werden können.
+        """
+        output_checks: dict[str, Any] = {"severity": severity}
+        if must_contain:
+            output_checks["must_contain"] = list(must_contain)
+        if must_not_contain:
+            output_checks["must_not_contain"] = list(must_not_contain)
         event = self.kernel.record(
             "correction",
             text,
             case_id=project,
             source="user",
-            payload={"scope": ["prompt", "tonality"]},
+            payload={"scope": ["prompt", "tonality"], "output_checks": output_checks},
         )
+        rule_ids = self._compile_output_rules(event)
+        return {"event_id": event.event_id, "rule_ids": rule_ids}
+
+    def _compile_output_rules(self, event: Any) -> list[str]:
+        checks = event.payload["output_checks"]
         rule_ids = []
-        for check_name, values in (
-            ("must_contain", must_contain),
-            ("must_not_contain", must_not_contain),
-        ):
+        for check_name in ("must_contain", "must_not_contain"):
+            values = checks.get(check_name)
             if not values:
                 continue
             rule = Rule(
-                rule_id=f"{check_name}_{uuid.uuid4().hex[:6]}",
-                condition={"case_id": project},
+                rule_id=f"{check_name}_{event.event_id[-6:]}",
+                condition={"case_id": event.case_id},
                 check={check_name: {"field": "output", "values": list(values)}},
-                severity=severity,
-                message=f"Korrektur: {text}",
+                severity=checks.get("severity", "warning"),
+                message=f"Korrektur: {event.content}",
                 source=event.event_id,
             )
             self.kernel.checker.add_rule(rule)
             rule_ids.append(rule.rule_id)
-        return {"event_id": event.event_id, "rule_ids": rule_ids}
+        return rule_ids
 
     def validate_output(self, project: str, output: str) -> dict[str, Any]:
         """Generierten Output gegen alle kompilierten Regeln prüfen."""
