@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BrainFump · Prompt-Optimizer</title>
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a2129; --border: #2c3640;
+      --text: #e6e8ea; --muted: #8b98a5; --accent: #4f9cf9;
+      --ok: #2ea44f; --warn: #d29922; --block: #da3633; --review: #a371f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+    header h1 { font-size: 1.15rem; margin: 0; }
+    header .sub { color: var(--muted); font-size: .85rem; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; padding: 1rem 1.5rem; max-width: 1200px; margin: 0 auto; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+    section h2 { font-size: .95rem; margin: 0 0 .75rem; color: var(--accent); }
+    label { display: block; font-size: .8rem; color: var(--muted); margin: .5rem 0 .2rem; }
+    input, textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .5rem; font-family: inherit; font-size: .9rem; }
+    textarea { resize: vertical; min-height: 4rem; }
+    button { margin-top: .7rem; background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: .5rem .9rem; font-size: .85rem; cursor: pointer; }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .gate { margin-top: .8rem; border-radius: 6px; padding: .7rem .9rem; font-size: .85rem; display: none; border: 1px solid; }
+    .gate.allow { display: block; border-color: var(--ok); }
+    .gate.warn { display: block; border-color: var(--warn); }
+    .gate.require_review { display: block; border-color: var(--review); }
+    .gate.block, .gate.suggest_alternative { display: block; border-color: var(--block); }
+    .gate .mode { font-weight: 700; text-transform: uppercase; font-size: .75rem; letter-spacing: .05em; }
+    .gate ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+    .metrics { display: flex; gap: .6rem; flex-wrap: wrap; }
+    .metric { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: .5rem .8rem; min-width: 90px; }
+    .metric .value { font-size: 1.2rem; font-weight: 700; }
+    .metric .name { font-size: .7rem; color: var(--muted); }
+    .card { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: .55rem .8rem; margin-bottom: .5rem; font-size: .82rem; }
+    .card.failure, .card.risk { border-left-color: var(--block); }
+    .card.skill { border-left-color: var(--ok); }
+    .card.preference { border-left-color: var(--warn); }
+    .card.governance { border-left-color: var(--review); }
+    .card .type { font-size: .68rem; text-transform: uppercase; color: var(--muted); letter-spacing: .05em; }
+    .row { display: flex; gap: .6rem; }
+    .row > div { flex: 1; }
+    #memory-list { max-height: 420px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🧠 BrainFump · Prompt-Optimizer</h1>
+    <span class="sub">Memory ist nicht nur Kontext. Memory ist ein Kontroll- und Lernsystem.</span>
+    <span style="flex:1"></span>
+    <label style="margin:0; display:flex; align-items:center; gap:.4rem;">Projekt
+      <input id="project" value="default" style="width:160px">
+    </label>
+  </header>
+  <main>
+    <section>
+      <h2>Prompt-Variante testen</h2>
+      <label for="prompt-text">Prompt</label>
+      <textarea id="prompt-text" placeholder="Du bist ein hilfreicher Assistent …"></textarea>
+      <div class="row">
+        <div>
+          <label for="task">Task</label>
+          <input id="task" value="default">
+        </div>
+        <div>
+          <label for="score">Score (0–1)</label>
+          <input id="score" type="number" min="0" max="1" step="0.01" value="0.5">
+        </div>
+      </div>
+      <button class="secondary" id="btn-check">Gatekeeper fragen</button>
+      <button id="btn-record">Experiment aufzeichnen</button>
+      <div class="gate" id="gate-card"></div>
+    </section>
+
+    <section>
+      <h2>Korrektur → ausführbare Regel</h2>
+      <label for="correction-text">Korrektur (frei formuliert)</label>
+      <input id="correction-text" placeholder="Antworten bitte auf Deutsch und im Du-Stil.">
+      <div class="row">
+        <div>
+          <label for="must-contain">Output muss enthalten (Komma-getrennt)</label>
+          <input id="must-contain" placeholder="du">
+        </div>
+        <div>
+          <label for="must-not-contain">Output darf nicht enthalten</label>
+          <input id="must-not-contain" placeholder="Sie, sehr geehrte">
+        </div>
+      </div>
+      <button id="btn-correction">Regel kompilieren</button>
+      <hr style="border-color: var(--border); margin: 1rem 0;">
+      <label for="output-text">Generierten Output prüfen</label>
+      <textarea id="output-text" placeholder="LLM-Antwort hier einfügen …"></textarea>
+      <button class="secondary" id="btn-validate">Gegen Regeln prüfen</button>
+      <div class="gate" id="validate-card"></div>
+    </section>
+
+    <section>
+      <h2>Metriken</h2>
+      <div class="metrics" id="metrics"></div>
+    </section>
+
+    <section>
+      <h2>Memory Cards</h2>
+      <div id="memory-list"></div>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

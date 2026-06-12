@@ -1,0 +1,21 @@
+# BrainFump NextGen — Anwendungs-Suite
+#
+# Portschema:
+#   8010  agentic-akte        (App 1, folgt)
+#   8020  coding-agent-guard  (App 2, folgt)
+#   8030  prompt-optimizer    (App 3)
+#   8040  memory-house        (App 4, folgt)
+
+services:
+  prompt-optimizer:
+    build:
+      context: .
+      dockerfile: apps/prompt_optimizer/Dockerfile
+    ports:
+      - "8030:8030"
+    volumes:
+      - prompt_optimizer_data:/data
+    restart: unless-stopped
+
+volumes:
+  prompt_optimizer_data:

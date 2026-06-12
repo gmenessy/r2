@@ -16,4 +16,4 @@ build-backend = "setuptools.build_meta"
 packages = ["brainfump"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "apps"]

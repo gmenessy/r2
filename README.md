@@ -77,6 +77,22 @@ curl -X POST http://127.0.0.1:8080/api/gatekeeper/check \
 | `brainfump/kernel.py` | Fassade, verdrahtet die Pipeline |
 | `brainfump/api.py` | `/api/gatekeeper/check` und `/api/memory/search` (Stdlib-HTTP) |
 
+## Anwendungen (apps/)
+
+Auf dem Kernel aufbauende Subprojekte, ausgeliefert über Docker Compose:
+
+| App | Port | Status | Beschreibung |
+|---|---|---|---|
+| [`apps/prompt_optimizer`](apps/prompt_optimizer/) | 8030 | ✅ | Prompt-Testlabor mit Langzeitgedächtnis: blockt gescheiterte Varianten, kompiliert Stil-Korrekturen zu Output-Checks |
+| `apps/agentic_akte` | 8010 | geplant | Aktenbasierter Agent mit Gedächtnis-Gate |
+| `apps/coding_agent_guard` | 8020 | geplant | MCP-/HTTP-Wächter für Coding Agents (PROJECTMEM) |
+| `apps/memory_house` | 8040 | geplant | Das Haus, das sich erinnert 🏠 |
+
+```bash
+docker compose up -d prompt-optimizer
+# → http://localhost:8030
+```
+
 ## Tests
 
 ```bash
