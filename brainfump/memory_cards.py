@@ -81,6 +81,15 @@ class MemoryCard:
             "created_at": self.created_at,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "MemoryCard":
+        """Inverse zu :meth:`to_dict`; tolerant gegenüber JSON-Listen für
+        die als Tupel gehaltenen Felder ``scope`` und ``evidence``."""
+        data = dict(data)
+        data["scope"] = tuple(data.get("scope", ()))
+        data["evidence"] = tuple(data.get("evidence", ()))
+        return cls(**data)
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS cards (
@@ -205,6 +214,13 @@ class MemoryCardStore:
             chain.append(current)
             current = self.get(current.supersedes) if current.supersedes else None
         return list(reversed(chain))
+
+    def successor_of(self, card_id: str) -> MemoryCard | None:
+        """Die Karte, die ``card_id`` direkt ersetzt hat (oder None)."""
+        row = self._conn.execute(
+            "SELECT card_id FROM cards WHERE supersedes = ?", (card_id,)
+        ).fetchone()
+        return self.get(row[0]) if row else None
 
     def __len__(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]

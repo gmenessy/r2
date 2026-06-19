@@ -1,4 +1,4 @@
-"""HTTP-Server für die Agentische Akte (Stdlib, framework-frei).
+"""HTTP-Server für die Agentische Akte (auf brainfump.webkit).
 
 Routen:
     GET  /                       Vanilla-JS-UI mit Gatekeeper-Warnkarte
@@ -17,116 +17,99 @@ Routen:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from brainfump import BrainFumpKernel  # noqa: E402
+from brainfump.webkit import Request, WebApp, require, serve  # noqa: E402
 from apps.agentic_akte.akte import AgenticAkte  # noqa: E402
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
+def build_app(akte: AgenticAkte) -> WebApp:
+    app = WebApp(static_dir=_STATIC_DIR)
+    app.static("/", "index.html").static("/index.html", "index.html").static("/app.js", "app.js")
+
+    @app.get("/api/cases")
+    def _cases(request: Request) -> dict:
+        return {"cases": akte.cases()}
+
+    @app.get("/api/timeline")
+    def _timeline(request: Request) -> dict:
+        return {"events": akte.timeline(request.query.get("case", "default"))}
+
+    @app.get("/api/memory")
+    def _memory(request: Request) -> dict:
+        return {"cards": akte.memory(request.query.get("case", "default"))}
+
+    @app.get("/api/deadlines")
+    def _deadlines(request: Request) -> dict:
+        return {"deadlines": akte.deadlines(request.query.get("case", "default"))}
+
+    @app.post("/api/documents")
+    def _documents(request: Request) -> dict:
+        body = request.json()
+        require(body, "name")
+        return akte.add_document(
+            body.get("case", "default"),
+            body["name"],
+            body.get("summary", ""),
+            fragile=bool(body.get("fragile")),
+            reason=body.get("reason", ""),
+        )
+
+    @app.post("/api/decisions")
+    def _decisions(request: Request) -> dict:
+        body = request.json()
+        require(body, "text")
+        return akte.record_decision(body.get("case", "default"), body["text"], body.get("scope"))
+
+    @app.post("/api/deadlines")
+    def _add_deadline(request: Request) -> dict:
+        body = request.json()
+        require(body, "description", "due_date")
+        return akte.add_deadline(body.get("case", "default"), body["description"], body["due_date"])
+
+    @app.post("/api/open-points")
+    def _open_points(request: Request) -> dict:
+        body = request.json()
+        require(body, "text")
+        return akte.add_open_point(body.get("case", "default"), body["text"])
+
+    @app.post("/api/failed-analyses")
+    def _failed_analyses(request: Request) -> dict:
+        body = request.json()
+        require(body, "text", "signature")
+        return akte.record_failed_analysis(
+            body.get("case", "default"),
+            body["text"],
+            body["signature"],
+            alternative=body.get("alternative", ""),
+        )
+
+    @app.post("/api/check")
+    def _check(request: Request) -> dict:
+        body = request.json()
+        return akte.check_action(
+            body.get("case", "default"),
+            body.get("action_type", "modify_document"),
+            documents=body.get("documents"),
+            error_signature=body.get("error_signature"),
+        )
+
+    @app.post("/api/consolidate")
+    def _consolidate(request: Request) -> dict:
+        return akte.consolidate(request.json().get("case", "default"))
+
+    return app
+
+
 def create_server(akte: AgenticAkte, host: str = "0.0.0.0", port: int = 8010) -> ThreadingHTTPServer:
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            url = urlparse(self.path)
-            if url.path in ("/", "/index.html"):
-                self._send_file("index.html", "text/html; charset=utf-8")
-                return
-            if url.path == "/app.js":
-                self._send_file("app.js", "application/javascript; charset=utf-8")
-                return
-            params = {k: v[0] for k, v in parse_qs(url.query).items()}
-            case = params.get("case", "default")
-            if url.path == "/api/cases":
-                self._send(200, {"cases": akte.cases()})
-            elif url.path == "/api/timeline":
-                self._send(200, {"events": akte.timeline(case)})
-            elif url.path == "/api/memory":
-                self._send(200, {"cards": akte.memory(case)})
-            elif url.path == "/api/deadlines":
-                self._send(200, {"deadlines": akte.deadlines(case)})
-            else:
-                self._send(404, {"error": f"unknown route: {url.path}"})
-
-        def do_POST(self) -> None:  # noqa: N802
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                payload = json.loads(self.rfile.read(length) or b"{}")
-                case = payload.get("case", "default")
-                if self.path == "/api/documents":
-                    self._send(
-                        200,
-                        akte.add_document(
-                            case,
-                            payload["name"],
-                            payload.get("summary", ""),
-                            fragile=bool(payload.get("fragile")),
-                            reason=payload.get("reason", ""),
-                        ),
-                    )
-                elif self.path == "/api/decisions":
-                    self._send(200, akte.record_decision(case, payload["text"], payload.get("scope")))
-                elif self.path == "/api/deadlines":
-                    self._send(200, akte.add_deadline(case, payload["description"], payload["due_date"]))
-                elif self.path == "/api/open-points":
-                    self._send(200, akte.add_open_point(case, payload["text"]))
-                elif self.path == "/api/failed-analyses":
-                    self._send(
-                        200,
-                        akte.record_failed_analysis(
-                            case,
-                            payload["text"],
-                            payload["signature"],
-                            alternative=payload.get("alternative", ""),
-                        ),
-                    )
-                elif self.path == "/api/check":
-                    self._send(
-                        200,
-                        akte.check_action(
-                            case,
-                            payload.get("action_type", "modify_document"),
-                            documents=payload.get("documents"),
-                            error_signature=payload.get("error_signature"),
-                        ),
-                    )
-                elif self.path == "/api/consolidate":
-                    self._send(200, akte.consolidate(case))
-                else:
-                    self._send(404, {"error": f"unknown route: {self.path}"})
-            except (ValueError, KeyError) as exc:
-                self._send(400, {"error": str(exc)})
-            except Exception as exc:  # pragma: no cover - defensive
-                self._send(500, {"error": str(exc)})
-
-        def _send(self, status: int, body: dict[str, Any]) -> None:
-            data = json.dumps(body).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def _send_file(self, name: str, content_type: str) -> None:
-            with open(os.path.join(_STATIC_DIR, name), "rb") as fh:
-                data = fh.read()
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, *args: Any) -> None:
-            pass
-
-    return ThreadingHTTPServer((host, port), Handler)
+    return serve(build_app(akte), host=host, port=port)
 
 
 def main() -> None:  # pragma: no cover - manueller Einstiegspunkt

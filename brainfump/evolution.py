@@ -188,14 +188,9 @@ class EvolutionMemory:
             return []
         # history() läuft nur rückwärts; Nachfolger über supersedes-Verweise suchen.
         last = chain[-1]
-        while True:
-            row = self.store._conn.execute(
-                "SELECT card_id FROM cards WHERE supersedes = ?", (last.card_id,)
-            ).fetchone()
-            if row is None:
-                break
-            last = self.store.get(row[0])
-            chain.append(last)
+        while (successor := self.store.successor_of(last.card_id)) is not None:
+            chain.append(successor)
+            last = successor
         return chain
 
     def _persist(self, patch: EvolutionPatch) -> None:

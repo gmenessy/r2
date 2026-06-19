@@ -1,4 +1,4 @@
-"""HTTP-Server für den Coding-Agent-Guard (headless, Stdlib).
+"""HTTP-Server für den Coding-Agent-Guard (headless, auf brainfump.webkit).
 
 Routen:
     POST /api/report      Entwicklungsereignis melden
@@ -9,82 +9,57 @@ Routen:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from brainfump import BrainFumpKernel  # noqa: E402
+from brainfump.webkit import Request, Response, WebApp, require, serve, text_response  # noqa: E402
 from apps.coding_agent_guard.guard import CodingAgentGuard  # noqa: E402
 
 
+def build_app(guard: CodingAgentGuard) -> WebApp:
+    app = WebApp()
+
+    @app.get("/api/summary")
+    def _summary(request: Request) -> Response:
+        repo = request.query.get("repo", "default")
+        max_items = int(request.query.get("max_items", 10))
+        return text_response(guard.summary(repo, max_items=max_items), "text/markdown; charset=utf-8")
+
+    @app.get("/api/stats")
+    def _stats(request: Request) -> dict:
+        return guard.stats(request.query.get("repo", "default"))
+
+    @app.post("/api/report")
+    def _report(request: Request) -> dict:
+        body = request.json()
+        require(body, "report_type")
+        return guard.report(
+            body.get("repo", "default"),
+            body["report_type"],
+            body.get("content", ""),
+            **body.get("payload", {}),
+        )
+
+    @app.post("/api/gate")
+    def _gate(request: Request) -> dict:
+        body = request.json()
+        return guard.gate(
+            body.get("repo", "default"),
+            action_type=body.get("action_type", "edit"),
+            files=body.get("files"),
+            error_signature=body.get("error_signature"),
+            context=body.get("context"),
+        )
+
+    return app
+
+
 def create_server(guard: CodingAgentGuard, host: str = "0.0.0.0", port: int = 8020) -> ThreadingHTTPServer:
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            url = urlparse(self.path)
-            params = {k: v[0] for k, v in parse_qs(url.query).items()}
-            repo = params.get("repo", "default")
-            if url.path == "/api/summary":
-                data = guard.summary(repo, max_items=int(params.get("max_items", 10))).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/markdown; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            elif url.path == "/api/stats":
-                self._send(200, guard.stats(repo))
-            else:
-                self._send(404, {"error": f"unknown route: {url.path}"})
-
-        def do_POST(self) -> None:  # noqa: N802
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                payload = json.loads(self.rfile.read(length) or b"{}")
-                repo = payload.get("repo", "default")
-                if self.path == "/api/report":
-                    self._send(
-                        200,
-                        guard.report(
-                            repo,
-                            payload["report_type"],
-                            payload.get("content", ""),
-                            **payload.get("payload", {}),
-                        ),
-                    )
-                elif self.path == "/api/gate":
-                    self._send(
-                        200,
-                        guard.gate(
-                            repo,
-                            action_type=payload.get("action_type", "edit"),
-                            files=payload.get("files"),
-                            error_signature=payload.get("error_signature"),
-                            context=payload.get("context"),
-                        ),
-                    )
-                else:
-                    self._send(404, {"error": f"unknown route: {self.path}"})
-            except (ValueError, KeyError) as exc:
-                self._send(400, {"error": str(exc)})
-            except Exception as exc:  # pragma: no cover - defensive
-                self._send(500, {"error": str(exc)})
-
-        def _send(self, status: int, body: dict[str, Any]) -> None:
-            data = json.dumps(body).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, *args: Any) -> None:
-            pass
-
-    return ThreadingHTTPServer((host, port), Handler)
+    return serve(build_app(guard), host=host, port=port)
 
 
 def main() -> None:  # pragma: no cover - manueller Einstiegspunkt

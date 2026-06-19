@@ -1,17 +1,17 @@
 """HTTP-API für den Memory Gatekeeper (Sprint 2: /api/gatekeeper/check).
 
-Bewusst ohne Framework-Abhängigkeit (Stdlib http.server), damit der Kernel
-ohne externe Pakete lauffähig bleibt. handle_request() ist davon getrennt
-testbar und kann ebenso hinter FastAPI/Starlette gehängt werden.
+Auf dem framework-freien :mod:`brainfump.webkit` aufgesetzt, damit der
+Kernel ohne externe Pakete lauffähig bleibt. Die Handler-Funktionen sind
+von Routing/Transport getrennt und so einzeln testbar.
 """
 
 from __future__ import annotations
 
-import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from typing import Any
 
 from brainfump.kernel import BrainFumpKernel
+from brainfump.webkit import Request, WebApp, require, serve
 
 
 def handle_gatekeeper_check(kernel: BrainFumpKernel, payload: dict[str, Any]) -> dict[str, Any]:
@@ -22,10 +22,8 @@ def handle_gatekeeper_check(kernel: BrainFumpKernel, payload: dict[str, Any]) ->
 
 
 def handle_search(kernel: BrainFumpKernel, payload: dict[str, Any]) -> dict[str, Any]:
-    query = payload.get("query")
-    if not query:
-        raise ValueError("payload must contain 'query'")
-    results = kernel.search(query, case_id=payload.get("case_id"), k=payload.get("k", 5))
+    require(payload, "query")
+    results = kernel.search(payload["query"], case_id=payload.get("case_id"), k=payload.get("k", 5))
     return {
         "results": [
             {"score": round(r.score, 4), "card": r.card.to_dict()} for r in results
@@ -33,40 +31,22 @@ def handle_search(kernel: BrainFumpKernel, payload: dict[str, Any]) -> dict[str,
     }
 
 
-_ROUTES = {
-    "/api/gatekeeper/check": handle_gatekeeper_check,
-    "/api/memory/search": handle_search,
-}
+def build_app(kernel: BrainFumpKernel) -> WebApp:
+    app = WebApp()
+
+    @app.post("/api/gatekeeper/check")
+    def _check(request: Request) -> dict[str, Any]:
+        return handle_gatekeeper_check(kernel, request.json())
+
+    @app.post("/api/memory/search")
+    def _search(request: Request) -> dict[str, Any]:
+        return handle_search(kernel, request.json())
+
+    return app
 
 
 def create_server(kernel: BrainFumpKernel, host: str = "127.0.0.1", port: int = 8080) -> ThreadingHTTPServer:
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802 (http.server API)
-            handler = _ROUTES.get(self.path)
-            if handler is None:
-                self._send(404, {"error": f"unknown route: {self.path}"})
-                return
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                payload = json.loads(self.rfile.read(length) or b"{}")
-                self._send(200, handler(kernel, payload))
-            except ValueError as exc:
-                self._send(400, {"error": str(exc)})
-            except Exception as exc:  # pragma: no cover - defensive
-                self._send(500, {"error": str(exc)})
-
-        def _send(self, status: int, body: dict[str, Any]) -> None:
-            data = json.dumps(body).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, *args: Any) -> None:
-            pass
-
-    return ThreadingHTTPServer((host, port), Handler)
+    return serve(build_app(kernel), host=host, port=port)
 
 
 def main() -> None:  # pragma: no cover - manueller Einstiegspunkt

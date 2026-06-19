@@ -1,4 +1,4 @@
-"""HTTP-Server für das Memory House (Stdlib, framework-frei).
+"""HTTP-Server für das Memory House (auf brainfump.webkit).
 
 Routen:
     GET  /                  Vanilla-JS-UI (Hausgrundriss)
@@ -14,113 +14,85 @@ Routen:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from brainfump import BrainFumpKernel  # noqa: E402
+from brainfump.webkit import Request, WebApp, require, serve  # noqa: E402
 from apps.memory_house.house import MemoryHouse  # noqa: E402
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 
+def build_app(house: MemoryHouse) -> WebApp:
+    app = WebApp(static_dir=_STATIC_DIR)
+    app.static("/", "index.html").static("/index.html", "index.html").static("/app.js", "app.js")
+
+    @app.get("/api/rooms")
+    def _rooms(request: Request) -> dict:
+        return {"rooms": house.rooms()}
+
+    @app.get("/api/room")
+    def _room(request: Request) -> dict:
+        return house.room_status(request.query.get("room", "wohnzimmer"))
+
+    @app.post("/api/attempt")
+    def _attempt(request: Request) -> dict:
+        body = request.json()
+        require(body, "action_type")
+        return house.attempt(
+            body.get("room", "wohnzimmer"),
+            body["action_type"],
+            device=body.get("device"),
+            signature=body.get("signature"),
+            context=body.get("context"),
+        )
+
+    @app.post("/api/failures")
+    def _failures(request: Request) -> dict:
+        body = request.json()
+        require(body, "content", "signature")
+        return house.remember_failure(
+            body.get("room", "wohnzimmer"),
+            body["content"],
+            body["signature"],
+            alternative=body.get("alternative", ""),
+        )
+
+    @app.post("/api/fragile")
+    def _fragile(request: Request) -> dict:
+        body = request.json()
+        require(body, "device")
+        return house.mark_fragile(body.get("room", "wohnzimmer"), body["device"], body.get("reason", ""))
+
+    @app.post("/api/rules")
+    def _rules(request: Request) -> dict:
+        body = request.json()
+        require(body, "text", "forbidden_action")
+        return house.add_house_rule(body["text"], body["forbidden_action"], when=body.get("when"))
+
+    @app.post("/api/modes")
+    def _modes(request: Request) -> dict:
+        body = request.json()
+        require(body, "statement")
+        return house.set_mode(body.get("room", "wohnzimmer"), body["statement"])
+
+    @app.post("/api/season")
+    def _season(request: Request) -> dict:
+        body = request.json()
+        require(body, "card_id", "new_statement", "valid_from")
+        return house.change_season(
+            body.get("room", "wohnzimmer"), body["card_id"], body["new_statement"], body["valid_from"]
+        )
+
+    return app
+
+
 def create_server(house: MemoryHouse, host: str = "0.0.0.0", port: int = 8040) -> ThreadingHTTPServer:
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            url = urlparse(self.path)
-            if url.path in ("/", "/index.html"):
-                self._send_file("index.html", "text/html; charset=utf-8")
-                return
-            if url.path == "/app.js":
-                self._send_file("app.js", "application/javascript; charset=utf-8")
-                return
-            params = {k: v[0] for k, v in parse_qs(url.query).items()}
-            if url.path == "/api/rooms":
-                self._send(200, {"rooms": house.rooms()})
-            elif url.path == "/api/room":
-                self._send(200, house.room_status(params.get("room", "wohnzimmer")))
-            else:
-                self._send(404, {"error": f"unknown route: {url.path}"})
-
-        def do_POST(self) -> None:  # noqa: N802
-            try:
-                length = int(self.headers.get("Content-Length", 0))
-                payload = json.loads(self.rfile.read(length) or b"{}")
-                room = payload.get("room", "wohnzimmer")
-                if self.path == "/api/attempt":
-                    self._send(
-                        200,
-                        house.attempt(
-                            room,
-                            payload["action_type"],
-                            device=payload.get("device"),
-                            signature=payload.get("signature"),
-                            context=payload.get("context"),
-                        ),
-                    )
-                elif self.path == "/api/failures":
-                    self._send(
-                        200,
-                        house.remember_failure(
-                            room,
-                            payload["content"],
-                            payload["signature"],
-                            alternative=payload.get("alternative", ""),
-                        ),
-                    )
-                elif self.path == "/api/fragile":
-                    self._send(200, house.mark_fragile(room, payload["device"], payload.get("reason", "")))
-                elif self.path == "/api/rules":
-                    self._send(
-                        200,
-                        house.add_house_rule(
-                            payload["text"],
-                            payload["forbidden_action"],
-                            when=payload.get("when"),
-                        ),
-                    )
-                elif self.path == "/api/modes":
-                    self._send(200, house.set_mode(room, payload["statement"]))
-                elif self.path == "/api/season":
-                    self._send(
-                        200,
-                        house.change_season(
-                            room, payload["card_id"], payload["new_statement"], payload["valid_from"]
-                        ),
-                    )
-                else:
-                    self._send(404, {"error": f"unknown route: {self.path}"})
-            except (ValueError, KeyError) as exc:
-                self._send(400, {"error": str(exc)})
-            except Exception as exc:  # pragma: no cover - defensive
-                self._send(500, {"error": str(exc)})
-
-        def _send(self, status: int, body: dict[str, Any]) -> None:
-            data = json.dumps(body).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def _send_file(self, name: str, content_type: str) -> None:
-            with open(os.path.join(_STATIC_DIR, name), "rb") as fh:
-                data = fh.read()
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def log_message(self, *args: Any) -> None:
-            pass
-
-    return ThreadingHTTPServer((host, port), Handler)
+    return serve(build_app(house), host=host, port=port)
 
 
 def main() -> None:  # pragma: no cover - manueller Einstiegspunkt

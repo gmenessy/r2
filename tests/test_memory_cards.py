@@ -70,3 +70,19 @@ def test_supersede_keeps_history():
     assert new.supersedes == old.card_id
     chain = store.history(new.card_id)
     assert [c.card_id for c in chain] == [old.card_id, new.card_id]
+
+
+def test_successor_of():
+    store = MemoryCardStore()
+    old = store.add(make_card())
+    new = store.supersede(old.card_id, make_card(statement="Nachfolger", valid_from="2026-06-12"))
+    assert store.successor_of(old.card_id).card_id == new.card_id
+    assert store.successor_of(new.card_id) is None
+
+
+def test_dict_roundtrip():
+    card = make_card(scope=("frontend", "mvp"), evidence=("evt_1", "evt_2"))
+    restored = MemoryCard.from_dict(card.to_dict())
+    assert restored == card
+    assert isinstance(restored.scope, tuple)
+    assert isinstance(restored.evidence, tuple)
