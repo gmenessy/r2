@@ -71,11 +71,23 @@ curl -X POST http://127.0.0.1:8080/api/gatekeeper/check \
 | `brainfump/evolution.py` | Patch-basierte Versionierung, Validity Resolver, Konflikt-Erkennung |
 | `brainfump/rules.py` | Korrekturen → ausführbare Regeln (TRACE) + Runtime Checks |
 | `brainfump/gatekeeper.py` | Pre-Action Gate: allow / warn / require_review / suggest_alternative / block |
-| `brainfump/retrieval.py` | fRAG-Ranking: semantic + case + recency + confidence + trust + risk + governance |
+| `brainfump/retrieval.py` | fRAG-Ranking: semantic + case + recency + confidence + trust + risk + governance; austauschbare `Similarity` (lexikalisch oder Embedding) |
 | `brainfump/consolidation.py` | Offline: Dedupe, Widersprüche, Archivierung |
 | `brainfump/evaluation.py` | Memory-Metriken + Golden-Scenario-Harness |
-| `brainfump/kernel.py` | Fassade, verdrahtet die Pipeline |
+| `brainfump/kernel.py` | Fassade, verdrahtet die Pipeline (`BrainFumpKernel(similarity=…)`) |
+| `brainfump/webkit.py` | Gemeinsamer Web-Baukasten: Routing, Validierung, `/api/health` |
 | `brainfump/api.py` | `/api/gatekeeper/check` und `/api/memory/search` (Stdlib-HTTP) |
+
+### Austauschbarer Embedding-Slot (fRAG)
+
+Default ist abhängigkeitsfreies lexikalisches Matching. Ein Embedding-Provider
+lässt sich injizieren, ohne dass sich das Ranking-Schema (`Weights`) ändert:
+
+```python
+from brainfump import BrainFumpKernel, EmbeddingSimilarity
+
+kernel = BrainFumpKernel(similarity=EmbeddingSimilarity(embed=my_embedding_fn))
+```
 
 ## Anwendungen (apps/)
 
@@ -93,9 +105,16 @@ docker compose up -d          # alle vier Apps
 docker compose up -d memory-house   # oder einzeln
 ```
 
-## Tests
+Jeder Service bietet `GET /api/health` (für den Docker-`HEALTHCHECK`) und
+`GET /api/version`.
+
+## Tests & CI
 
 ```bash
-pip install pytest
-python3 -m pytest tests/
+pip install -e ".[dev]"
+python3 -m pytest --cov      # 119 Tests, Branch-Coverage-Gate (fail_under=85)
+python3 -m pyflakes brainfump apps
 ```
+
+CI (`.github/workflows/ci.yml`) führt pyflakes + `pytest --cov` über
+Python 3.10/3.11/3.12 aus.

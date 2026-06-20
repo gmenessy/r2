@@ -16,7 +16,13 @@ from brainfump.extractor import MemoryExtractor
 from brainfump.evolution import EvolutionMemory, EvolutionPatch, PATCH_TYPES
 from brainfump.rules import Rule, RuleCompiler, RuntimeChecker, Violation
 from brainfump.gatekeeper import GateDecision, GateFinding, GateMode, MemoryGatekeeper
-from brainfump.retrieval import Retriever
+from brainfump.retrieval import (
+    EmbeddingSimilarity,
+    LexicalSimilarity,
+    Retriever,
+    Similarity,
+    Weights,
+)
 from brainfump.consolidation import Consolidator
 from brainfump.evaluation import EvaluationHarness, GoldenScenario
 from brainfump.kernel import BrainFumpKernel
@@ -27,6 +33,7 @@ __all__ = [
     "BrainFumpKernel",
     "Consolidator",
     "EVENT_TYPES",
+    "EmbeddingSimilarity",
     "EvaluationHarness",
     "Event",
     "EventLog",
@@ -36,6 +43,7 @@ __all__ = [
     "GateFinding",
     "GateMode",
     "GoldenScenario",
+    "LexicalSimilarity",
     "MEMORY_TYPES",
     "MemoryCard",
     "MemoryCardStore",
@@ -46,5 +54,7 @@ __all__ = [
     "Rule",
     "RuleCompiler",
     "RuntimeChecker",
+    "Similarity",
     "Violation",
+    "Weights",
 ]

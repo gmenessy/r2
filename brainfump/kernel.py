@@ -20,7 +20,7 @@ from brainfump.evolution import EvolutionMemory, EvolutionPatch
 from brainfump.extractor import MemoryExtractor
 from brainfump.gatekeeper import GateDecision, MemoryGatekeeper
 from brainfump.memory_cards import MemoryCard, MemoryCardStore
-from brainfump.retrieval import Retriever, ScoredCard
+from brainfump.retrieval import Retriever, ScoredCard, Similarity
 from brainfump.rules import RuleCompiler, RuntimeChecker
 
 
@@ -32,7 +32,7 @@ class BrainFumpKernel:
     (entspricht vfs://events/ und vfs://memory/).
     """
 
-    def __init__(self, base_path: str | None = None) -> None:
+    def __init__(self, base_path: str | None = None, similarity: "Similarity | None" = None) -> None:
         if base_path is None:
             event_path = card_path = patch_path = ":memory:"
         else:
@@ -48,7 +48,7 @@ class BrainFumpKernel:
         self.compiler = RuleCompiler()
         self.checker = RuntimeChecker()
         self.gatekeeper = MemoryGatekeeper(self.cards, self.checker)
-        self.retriever = Retriever(self.cards)
+        self.retriever = Retriever(self.cards, similarity=similarity)
         self.consolidator = Consolidator(self.cards)
 
         # Regeln leben im RAM — nach einem Neustart werden sie aus den

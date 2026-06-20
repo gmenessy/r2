@@ -62,13 +62,16 @@ Verifikation: `pyflakes` clean, `pytest` 97/97 grün.
 
 ### A) Mittelfristige Aufgaben (Features & größeres Refactoring)
 
-| Ticket | Beschreibung | Aufwand | Priorität |
-|--------|--------------|---------|-----------|
-| **M-1 · Shared Web-Toolkit** | Gemeinsames `brainfump/webkit.py`: deklaratives Routing, JSON-Helfer, Static-Serving, einheitliches Fehler-Mapping, `serve()`-Helper. Alle 5 Server darauf umstellen. | M | **HOCH (gewählt)** |
-| M-2 · Einheitliche Request-Validierung | `require()`/Schema-Helfer im Web-Toolkit, in allen Servern statt ad-hoc-Checks. Baut auf M-1 auf. | S | Hoch |
-| M-3 · `/api/health` + `/api/version` | Einheitliche Health-/Version-Endpunkte je Service; Docker-`HEALTHCHECK` darauf umstellen. | S | Mittel |
-| M-4 · Coverage + CI | `pytest-cov` + GitHub-Actions-Workflow (Lint via pyflakes, Tests, Coverage-Gate). | M | Mittel |
-| M-5 · fRAG-Embedding-Slot | Pluggable Similarity-Funktion hinter dem bestehenden `Weights`-Schema (optional Embeddings), API-stabil. | M | Mittel |
+> **Sprint-Ergebnis: alle Tickets der Kategorie A abgeschlossen** (Details im
+> Abschnitt 4). Suite von 95 → **119 Tests**, Branch-Coverage **94,7 %**.
+
+| Ticket | Beschreibung | Aufwand | Status |
+|--------|--------------|---------|--------|
+| **M-1 · Shared Web-Toolkit** | Gemeinsames `brainfump/webkit.py`: deklaratives Routing, JSON-Helfer, Static-Serving, einheitliches Fehler-Mapping, `serve()`-Helper. Alle 5 Server darauf umstellen. | M | ✅ erledigt |
+| M-2 · Einheitliche Request-Validierung | `require()`/Schema-Helfer im Web-Toolkit, in allen Servern statt ad-hoc-Checks. Baut auf M-1 auf. | S | ✅ erledigt |
+| M-3 · `/api/health` + `/api/version` | Einheitliche Health-/Version-Endpunkte je Service; Docker-`HEALTHCHECK` darauf umstellen. | S | ✅ erledigt |
+| M-4 · Coverage + CI | `pytest-cov` + GitHub-Actions-Workflow (Lint via pyflakes, Tests, Coverage-Gate). | M | ✅ erledigt |
+| M-5 · fRAG-Embedding-Slot | Pluggable Similarity-Funktion hinter dem bestehenden `Weights`-Schema (optional Embeddings), API-stabil. | M | ✅ erledigt |
 
 ### B) Langfristige Epics (Architekturumbau, Tech Debt)
 
@@ -82,25 +85,48 @@ Verifikation: `pyflakes` clean, `pytest` 97/97 grün.
 
 ---
 
-## 4. Sprint-Auswahl (Phase 4)
+## 4. Sprint-Durchführung (Phase 4) — Abschlussbericht
 
-Gewählt: **M-1 · Shared Web-Toolkit** — größter Hebel gegen den dominanten
-Tech Debt, entriegelt M-2 und M-3 und senkt das Risiko jeder künftigen App.
+Der gesamte Backlog der Kategorie A wurde abgearbeitet. Reihenfolge bewusst
+nach Abhängigkeit: M-1 schafft das Fundament, M-2/M-3 setzen darauf auf,
+M-4 sichert die Qualität, M-5 erweitert den Kernel.
 
-### Implementierungs-Status M-1 (erledigt)
-
-- Neues Modul `brainfump/webkit.py` (195 Z.): deklaratives `WebApp`-Routing,
+### M-1 · Shared Web-Toolkit ✅
+- Neues Modul `brainfump/webkit.py`: deklaratives `WebApp`-Routing,
   `Request`/`Response`, `json_response`/`text_response`, zentrales Fehler-
   Mapping (`HttpError`→Status, `ValueError`/`KeyError`→400, sonst 500,
   unbekannte Route→404), Static-Serving mit Content-Type-Inferenz, `serve()`.
-- Alle fünf Server (`brainfump/api.py` + 4 App-Server) auf das Toolkit
-  umgestellt; `create_server(...)`-Signaturen und `main()`-Einstiegspunkte
-  unverändert (keine Auswirkung auf Dockerfiles/Tests/Aufrufer).
-- **M-2 teilweise miterledigt:** einheitlicher `require()`-Helfer ersetzt die
-  ad-hoc-Pflichtfeldprüfungen; nutzt Präsenzprüfung statt Wahrheitswert und
-  behebt damit den latenten Bug, dass ein Score von `0.0` als „fehlend" galt.
-- 14 neue Tests (`tests/test_webkit.py`); Gesamtsuite **111 grün**,
-  `pyflakes` sauber.
+- Alle fünf Server (`brainfump/api.py` + 4 App-Server) umgestellt;
+  `create_server(...)`-Signaturen und `main()`-Einstiegspunkte unverändert.
 
-Folgeempfehlung für den nächsten Sprint: **M-3** (`/api/health` je Service auf
-Basis des Toolkits) und **M-4** (Coverage + CI).
+### M-2 · Einheitliche Request-Validierung ✅
+- `require()`-Helfer im Toolkit ersetzt alle ad-hoc-Pflichtfeldprüfungen.
+  Präsenzprüfung statt Wahrheitswert behebt den latenten Bug, dass ein Score
+  von `0.0` als „fehlend" galt.
+
+### M-3 · Health-/Version-Endpunkte ✅
+- `WebApp.health(service, version)` registriert einheitlich `/api/health`
+  und `/api/version` auf allen fünf Services.
+- Docker-`HEALTHCHECK`s zeigen jetzt auf `/api/health` statt auf
+  Geschäfts-Endpunkte; Version aus `brainfump.__version__`.
+
+### M-4 · Coverage + CI ✅
+- `pytest-cov` mit Branch-Coverage und Gate (`fail_under=85`, aktuell
+  **94,7 %**); reine Transport-Schichten (`server.py`) ausgenommen.
+- GitHub-Actions-Workflow `.github/workflows/ci.yml`: pyflakes + `pytest --cov`
+  über Python 3.10/3.11/3.12.
+
+### M-5 · fRAG-Embedding-Slot ✅
+- `Retriever` akzeptiert eine austauschbare `Similarity` (Protocol).
+  Default `LexicalSimilarity` (Jaccard, unverändertes Verhalten),
+  `EmbeddingSimilarity(embed)` für Cosinus über einen injizierten Provider
+  mit Card-Vektor-Cache. `min_similarity`-Schwelle filtert Grundrauschen.
+- `BrainFumpKernel(similarity=…)` reicht die Wahl durch — das Ranking-Schema
+  (`Weights`) bleibt stabil.
+
+**Verifikation:** `pyflakes` sauber, **119 Tests grün**, Branch-Coverage 94,7 %.
+
+### Empfehlung für den nächsten Sprint
+Aus Kategorie B zuerst **E-2** (skalierbares Retrieval/Graph — baut direkt auf
+dem nun vorhandenen Embedding-Slot auf) und **E-1** (persistente Rules Engine,
+beseitigt die RAM-Rekompilierung beim Start).
