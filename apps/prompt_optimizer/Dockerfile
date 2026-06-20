@@ -12,6 +12,6 @@ VOLUME /data
 EXPOSE 8030
 
 HEALTHCHECK --interval=30s --timeout=3s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8030/api/metrics')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8030/api/health')"
 
 CMD ["python", "apps/prompt_optimizer/server.py"]

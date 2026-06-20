@@ -107,6 +107,16 @@ def test_response_helpers():
     assert md.body == b"# Titel"
 
 
+def test_health_routes():
+    app = WebApp()
+    app.health("demo-service", "1.2.3")
+    health = app.dispatch(make_request("GET", "/api/health"))
+    assert health.status == 200
+    assert json.loads(health.body) == {"status": "ok", "service": "demo-service"}
+    version = app.dispatch(make_request("GET", "/api/version"))
+    assert json.loads(version.body) == {"service": "demo-service", "version": "1.2.3"}
+
+
 def test_static_requires_static_dir():
     with pytest.raises(ValueError):
         WebApp().static("/", "index.html")

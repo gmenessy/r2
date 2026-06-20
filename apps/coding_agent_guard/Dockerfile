@@ -12,6 +12,6 @@ VOLUME /data
 EXPOSE 8020
 
 HEALTHCHECK --interval=30s --timeout=3s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/api/stats')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/api/health')"
 
 CMD ["python", "apps/coding_agent_guard/server.py"]

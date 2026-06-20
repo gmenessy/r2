@@ -10,6 +10,7 @@ from __future__ import annotations
 from http.server import ThreadingHTTPServer
 from typing import Any
 
+from brainfump import __version__
 from brainfump.kernel import BrainFumpKernel
 from brainfump.webkit import Request, WebApp, require, serve
 
@@ -33,6 +34,7 @@ def handle_search(kernel: BrainFumpKernel, payload: dict[str, Any]) -> dict[str,
 
 def build_app(kernel: BrainFumpKernel) -> WebApp:
     app = WebApp()
+    app.health("gatekeeper-api", __version__)
 
     @app.post("/api/gatekeeper/check")
     def _check(request: Request) -> dict[str, Any]:

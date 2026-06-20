@@ -12,6 +12,6 @@ VOLUME /data
 EXPOSE 8010
 
 HEALTHCHECK --interval=30s --timeout=3s \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/api/cases')"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/api/health')"
 
 CMD ["python", "apps/agentic_akte/server.py"]

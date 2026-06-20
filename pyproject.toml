@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-cov", "pyflakes"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -17,3 +17,19 @@ packages = ["brainfump"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "apps"]
+
+[tool.coverage.run]
+branch = true
+source = ["brainfump", "apps"]
+omit = ["*/server.py", "*/__init__.py", "*/hooks/*"]
+
+[tool.coverage.report]
+# server.py/main() sind dünne Transport-/CLI-Schichten und über die
+# HTTP-Roundtrip-Tests abgedeckt; ausgenommen sind nur die manuellen
+# Einstiegspunkte (siehe pragma: no cover).
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
+fail_under = 85
+show_missing = true

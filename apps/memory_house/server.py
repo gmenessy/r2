@@ -20,7 +20,7 @@ from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from brainfump import BrainFumpKernel  # noqa: E402
+from brainfump import BrainFumpKernel, __version__  # noqa: E402
 from brainfump.webkit import Request, WebApp, require, serve  # noqa: E402
 from apps.memory_house.house import MemoryHouse  # noqa: E402
 
@@ -29,6 +29,7 @@ _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 def build_app(house: MemoryHouse) -> WebApp:
     app = WebApp(static_dir=_STATIC_DIR)
+    app.health("memory-house", __version__)
     app.static("/", "index.html").static("/index.html", "index.html").static("/app.js", "app.js")
 
     @app.get("/api/rooms")

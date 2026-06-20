@@ -134,6 +134,23 @@ class WebApp:
 
         return decorator
 
+    def health(self, service: str, version: str) -> "WebApp":
+        """Registriert einheitliche ``/api/health``- und ``/api/version``-Routen.
+
+        ``/api/health`` dient dem Docker-``HEALTHCHECK`` (kein Argument nötig);
+        ``/api/version`` macht den ausgelieferten Stand abfragbar.
+        """
+
+        def _health(_: Request) -> dict[str, Any]:
+            return {"status": "ok", "service": service}
+
+        def _version(_: Request) -> dict[str, Any]:
+            return {"service": service, "version": version}
+
+        self._routes[("GET", "/api/health")] = _health
+        self._routes[("GET", "/api/version")] = _version
+        return self
+
     def static(self, path: str, filename: str, content_type: str | None = None) -> "WebApp":
         """Registriert eine GET-Route, die eine Datei aus ``static_dir`` liefert."""
         if self._static_dir is None:
