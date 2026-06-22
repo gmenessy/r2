@@ -8,6 +8,7 @@ Memory-Raum; case_id=None markiert globale DNA-/Governance-Karten.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass, field, replace
@@ -114,12 +115,40 @@ CREATE INDEX IF NOT EXISTS idx_cards_status ON cards (status);
 """
 
 
+_INDEX_TOKEN = re.compile(r"[a-zäöüß0-9]+", re.IGNORECASE)
+
+
+def _index_tokens(statement: str, scope: tuple[str, ...]) -> set[str]:
+    tokens = {t.lower() for t in _INDEX_TOKEN.findall(statement)}
+    tokens |= {s.lower() for s in scope}
+    return tokens
+
+
 class MemoryCardStore:
     """Memory Card Store (vfs://memory/cards/)."""
 
     def __init__(self, path: str = ":memory:") -> None:
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
+        # Lazy invertierter Token-Index (Token -> aktive card_ids) als
+        # Kandidaten-Vorfilter fürs Retrieval. None = ungültig/neu zu bauen;
+        # jeder Schreibzugriff invalidiert ihn.
+        self._token_index: dict[str, set[str]] | None = None
+
+    def _invalidate_index(self) -> None:
+        self._token_index = None
+
+    def _ensure_index(self) -> dict[str, set[str]]:
+        if self._token_index is None:
+            index: dict[str, set[str]] = {}
+            rows = self._conn.execute(
+                "SELECT card_id, statement, scope FROM cards WHERE status = 'active'"
+            )
+            for card_id, statement, scope_json in rows:
+                for token in _index_tokens(statement, tuple(json.loads(scope_json))):
+                    index.setdefault(token, set()).add(card_id)
+            self._token_index = index
+        return self._token_index
 
     def add(self, card: MemoryCard) -> MemoryCard:
         self._conn.execute(
@@ -142,6 +171,7 @@ class MemoryCardStore:
             ),
         )
         self._conn.commit()
+        self._invalidate_index()
         return card
 
     def get(self, card_id: str) -> MemoryCard | None:
@@ -175,12 +205,57 @@ class MemoryCardStore:
         if memory_type is not None:
             sql += " AND memory_type = ?"
             params.append(memory_type)
-        sql += " ORDER BY (case_id IS NULL), created_at"
+        sql += " ORDER BY (case_id IS NULL), created_at, card_id"
         cards = [self._row_to_card(r) for r in self._conn.execute(sql, params)]
         if scope is not None:
             cards = [c for c in cards if scope in c.scope or not c.scope]
         if on_date is not None:
             cards = [c for c in cards if c.is_valid_on(on_date)]
+        return cards
+
+    def active_by_tokens(
+        self,
+        tokens: "set[str] | frozenset[str]",
+        case_id: str | None = None,
+        memory_type: str | None = None,
+        include_global: bool = True,
+        on_date: str | None = None,
+    ) -> list[MemoryCard]:
+        """Wie :meth:`active`, aber über den Token-Index auf Karten beschränkt,
+        die mindestens einen der ``tokens`` enthalten.
+
+        Ergebnis-identisch zur token-basierten (lexikalischen) Ähnlichkeit:
+        deren Score ist genau dann > 0, wenn Query und Karte ein Token teilen.
+        Reihenfolge und Filter entsprechen :meth:`active`.
+        """
+        index = self._ensure_index()
+        candidate_ids: set[str] = set()
+        for token in tokens:
+            candidate_ids |= index.get(token, set())
+
+        cards: list[MemoryCard] = []
+        for card_id in candidate_ids:
+            card = self.get(card_id)
+            if card is None or card.status != "active":
+                continue
+            if memory_type is not None and card.memory_type != memory_type:
+                continue
+            if case_id is not None and include_global:
+                if not (card.case_id == case_id or card.case_id is None):
+                    continue
+            elif case_id is not None:
+                if card.case_id != case_id:
+                    continue
+            elif not include_global:
+                if card.case_id is None:
+                    continue
+            if on_date is not None and not card.is_valid_on(on_date):
+                continue
+            cards.append(card)
+        # Reihenfolge exakt wie active(): zuerst Case-Karten, dann globale DNA,
+        # nach created_at, mit card_id als totalem Tiebreaker (deterministisch
+        # auch bei identischem Zeitstempel).
+        cards.sort(key=lambda c: (c.case_id is None, c.created_at, c.card_id))
         return cards
 
     def set_status(self, card_id: str, status: str) -> None:
@@ -190,12 +265,14 @@ class MemoryCardStore:
             "UPDATE cards SET status = ? WHERE card_id = ?", (status, card_id)
         )
         self._conn.commit()
+        self._invalidate_index()
 
     def set_valid_to(self, card_id: str, valid_to: str) -> None:
         self._conn.execute(
             "UPDATE cards SET valid_to = ? WHERE card_id = ?", (valid_to, card_id)
         )
         self._conn.commit()
+        self._invalidate_index()
 
     def supersede(self, old_card_id: str, new_card: MemoryCard) -> MemoryCard:
         """Versionierung: Alte Karte wird ersetzt, nie gelöscht."""

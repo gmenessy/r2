@@ -51,6 +51,11 @@ class LexicalSimilarity:
             return 0.0
         return len(query_tokens & card_tokens) / len(union)
 
+    def candidate_tokens(self, query: str) -> set[str]:
+        """Tokens, über die der Store-Index vorfiltern darf. Da Jaccard genau
+        dann > 0 ist, wenn ein Token geteilt wird, ist der Vorfilter exakt."""
+        return _tokens(query)
+
 
 class EmbeddingSimilarity:
     """Cosinus-Ähnlichkeit über einen injizierten Embedding-Provider.
@@ -133,6 +138,7 @@ class Retriever:
         weights: Weights | None = None,
         similarity: Similarity | None = None,
         min_similarity: float = 0.0,
+        use_index: bool = True,
     ) -> None:
         self.store = store
         self.weights = weights or Weights()
@@ -141,6 +147,25 @@ class Retriever:
         # das lexikalische Verhalten (jede Überlappung zählt); für Embeddings
         # kann ein positiver Schwellwert das Grundrauschen herausfiltern.
         self.min_similarity = min_similarity
+        # Token-Index als Kandidaten-Vorfilter nutzen, sofern die Similarity
+        # ihn unterstützt (candidate_tokens) und der Schwellwert die Exaktheit
+        # nicht verletzt. Embeddings haben keinen → voller Scan.
+        self.use_index = use_index
+
+    def _candidates(
+        self, query: str, case_id: str | None, include_global: bool, on_date: str
+    ) -> list[MemoryCard]:
+        prefilter = getattr(self.similarity, "candidate_tokens", None)
+        if self.use_index and self.min_similarity <= 0.0 and prefilter is not None:
+            return self.store.active_by_tokens(
+                prefilter(query),
+                case_id=case_id,
+                include_global=include_global,
+                on_date=on_date,
+            )
+        return self.store.active(
+            case_id=case_id, include_global=include_global, on_date=on_date
+        )
 
     def search(
         self,
@@ -151,9 +176,7 @@ class Retriever:
         on_date: str | None = None,
     ) -> list[ScoredCard]:
         on_date = on_date or date.today().isoformat()
-        candidates = self.store.active(
-            case_id=case_id, include_global=include_global, on_date=on_date
-        )
+        candidates = self._candidates(query, case_id, include_global, on_date)
         scored = [
             ScoredCard(card=c, score=self._score(query, c, case_id)) for c in candidates
         ]

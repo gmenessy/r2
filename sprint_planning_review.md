@@ -164,3 +164,32 @@ ist der Flaschenhals. Das ist genau das Signal, das Sprint 2 begründet:
 Kandidaten-Vorfilter über einen invertierten Index (Epic E-2), damit das
 Scoring nur noch auf einer kleinen Treffermenge läuft. Der Benchmark dient ab
 jetzt als Regressions-/Schwellenmessung.
+
+---
+
+## 6. Next Horizon — Sprint 2 (Optimize & Refine) ✅ Kern-Deliverable
+
+### Deliverable: invertierter Token-Index als Kandidaten-Vorfilter (E-2, Teil 1)
+- `MemoryCardStore` führt einen lazy invertierten Index (Token → aktive
+  card_ids), der bei jedem Schreibzugriff invalidiert und beim nächsten Lesen
+  neu gebaut wird. Neue Methode `active_by_tokens(...)`.
+- `LexicalSimilarity.candidate_tokens(query)` meldet die Vorfilter-Tokens;
+  `Retriever(use_index=True)` nutzt sie. Da Jaccard genau dann > 0 ist, wenn
+  ein Token geteilt wird, ist der Vorfilter **ergebnis-identisch** zum vollen
+  Scan (Test `test_index_scores_same_cards_as_full_scan`).
+- Embeddings haben keinen `candidate_tokens` → automatischer Fallback auf den
+  vollen Scan (kein Ergebnisverlust).
+
+### QM
+- Exaktheit (Index == Full-Scan auf Zufalls-Store), Index-Invalidierung bei
+  add/Status-Wechsel, Case-/Datums-Filter, Embedding-Fallback. **138 Tests grün.**
+
+### Benchmark vorher → nachher (10k Karten, 200 Queries)
+| Similarity | p95 vorher | p95 nachher |
+|---|---|---|
+| lexical | ~131 ms | **~48 ms** (Ziel < 50 ms erreicht) |
+| embedding (hashing) | ~362 ms | ~384 ms (unverändert — Token-Prefilter nicht anwendbar) |
+
+**Fazit:** Das p95-Ziel < 50 ms ist für die lexikalische Default-Similarity
+erreicht. Für Embeddings bleibt ein approximativer Nearest-Neighbor-Index
+(ANN) das nächste Epic — bewusst nicht in diesem Horizont (radikaler Realismus).
