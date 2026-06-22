@@ -14,11 +14,12 @@ semantische Zugriffspfad, nicht das Memory selbst).
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Callable, Protocol, Sequence
+from typing import Callable, MutableMapping, Protocol, Sequence
 
 from brainfump.memory_cards import MemoryCard, MemoryCardStore
 
@@ -61,9 +62,15 @@ class EmbeddingSimilarity:
     Cosinus-Werte (entgegengesetzt) werden auf ``0`` geklemmt.
     """
 
-    def __init__(self, embed: Callable[[str], Sequence[float]]) -> None:
+    def __init__(
+        self,
+        embed: Callable[[str], Sequence[float]],
+        cache: "MutableMapping[str, Sequence[float]] | None" = None,
+    ) -> None:
         self._embed = embed
-        self._cache: dict[tuple[str, str], Sequence[float]] = {}
+        # Card-Vektoren: injizierbar (z. B. SqliteVectorCache) für Persistenz
+        # über Neustarts hinweg; Default ist ein RAM-dict.
+        self._cache: MutableMapping[str, Sequence[float]] = {} if cache is None else cache
         # Ein-Slot-Memo für die Query: innerhalb einer search()-Schleife über
         # N Karten wird die Query so genau einmal eingebettet statt N-mal
         # (spart bei echten Embedding-APIs N-fache Kosten und Latenz).
@@ -76,10 +83,18 @@ class EmbeddingSimilarity:
             self._query_memo = (query, cached_vec)
         return cached_vec
 
+    @staticmethod
+    def _card_key(card: MemoryCard) -> str:
+        # Statement-Hash im Schlüssel: eine geänderte Aussage wird neu
+        # eingebettet, eine unveränderte aus dem Cache bedient.
+        digest = hashlib.sha1(card.statement.encode("utf-8")).hexdigest()[:16]
+        return f"{card.card_id}:{digest}"
+
     def __call__(self, query: str, card: MemoryCard) -> float:
-        key = (card.card_id, card.statement)
-        card_vec = self._cache.get(key)
-        if card_vec is None:
+        key = self._card_key(card)
+        try:
+            card_vec = self._cache[key]
+        except KeyError:
             text = " ".join([card.statement, *card.scope])
             card_vec = self._embed(text)
             self._cache[key] = card_vec

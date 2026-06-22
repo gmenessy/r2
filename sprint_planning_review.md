@@ -130,3 +130,37 @@ M-4 sichert die Qualität, M-5 erweitert den Kernel.
 Aus Kategorie B zuerst **E-2** (skalierbares Retrieval/Graph — baut direkt auf
 dem nun vorhandenen Embedding-Slot auf) und **E-1** (persistente Rules Engine,
 beseitigt die RAM-Rekompilierung beim Start).
+
+---
+
+## 5. Next Horizon — Sprint 1 (Stabilize & Ship Core) ✅ durchgeführt
+
+Umsetzung der Roadmap aus `docs/ENGINEERING_LOOP_REVIEW.md`.
+
+### Deliverables
+- **Embedding-Provider** `brainfump/embeddings.py::HashingEmbedder` —
+  deterministisches, abhängigkeitsfreies Feature-Hashing-Embedding
+  (L2-normalisiert), Offline-Default und Adapter-Vorbild für echte APIs.
+- **Persistenter Vektor-Cache** `SqliteVectorCache` (MutableMapping) —
+  in `EmbeddingSimilarity(embed, cache=…)` injizierbar; Card-Vektoren
+  überleben Neustarts, statt jedes Mal neu eingebettet zu werden.
+  Schlüssel enthält Statement-Hash → geänderte Aussagen werden re-embedded.
+- **Latenz-Benchmark** `scripts/bench_retrieval.py` — misst p50/p95/max für
+  lexical vs. embedding über N Karten.
+
+### QM
+- Parität lexical↔embedding auf Golden-Set (`test_retrieval_parity_*`),
+  Cache-Persistenz-Test über „Neustart", Latenz-Smoke. **132 Tests grün.**
+
+### Gemessene Baseline (`--cards 10000 --queries 200`)
+| Similarity | p50 | p95 | max |
+|---|---|---|---|
+| lexical | ~118 ms | ~131 ms | ~152 ms |
+| embedding (hashing, dim=256) | ~318 ms | ~362 ms | ~1057 ms |
+
+**Befund (radikaler Realismus):** Das p95-Ziel < 50 ms wird bei 10k Karten
+**noch nicht** erreicht — der O(n)-Vollscan über alle aktiven Karten je Query
+ist der Flaschenhals. Das ist genau das Signal, das Sprint 2 begründet:
+Kandidaten-Vorfilter über einen invertierten Index (Epic E-2), damit das
+Scoring nur noch auf einer kleinen Treffermenge läuft. Der Benchmark dient ab
+jetzt als Regressions-/Schwellenmessung.

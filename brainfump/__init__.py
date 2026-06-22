@@ -16,6 +16,7 @@ from brainfump.extractor import MemoryExtractor
 from brainfump.evolution import EvolutionMemory, EvolutionPatch, PATCH_TYPES
 from brainfump.rules import Rule, RuleCompiler, RuntimeChecker, Violation
 from brainfump.gatekeeper import GateDecision, GateFinding, GateMode, MemoryGatekeeper
+from brainfump.embeddings import HashingEmbedder, SqliteVectorCache
 from brainfump.retrieval import (
     EmbeddingSimilarity,
     LexicalSimilarity,
@@ -43,6 +44,7 @@ __all__ = [
     "GateFinding",
     "GateMode",
     "GoldenScenario",
+    "HashingEmbedder",
     "LexicalSimilarity",
     "MEMORY_TYPES",
     "MemoryCard",
@@ -55,6 +57,7 @@ __all__ = [
     "RuleCompiler",
     "RuntimeChecker",
     "Similarity",
+    "SqliteVectorCache",
     "Violation",
     "Weights",
 ]
