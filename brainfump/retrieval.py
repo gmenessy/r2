@@ -64,6 +64,17 @@ class EmbeddingSimilarity:
     def __init__(self, embed: Callable[[str], Sequence[float]]) -> None:
         self._embed = embed
         self._cache: dict[tuple[str, str], Sequence[float]] = {}
+        # Ein-Slot-Memo für die Query: innerhalb einer search()-Schleife über
+        # N Karten wird die Query so genau einmal eingebettet statt N-mal
+        # (spart bei echten Embedding-APIs N-fache Kosten und Latenz).
+        self._query_memo: tuple[str | None, Sequence[float] | None] = (None, None)
+
+    def _embed_query(self, query: str) -> Sequence[float]:
+        cached_query, cached_vec = self._query_memo
+        if cached_query != query or cached_vec is None:
+            cached_vec = self._embed(query)
+            self._query_memo = (query, cached_vec)
+        return cached_vec
 
     def __call__(self, query: str, card: MemoryCard) -> float:
         key = (card.card_id, card.statement)
@@ -72,7 +83,7 @@ class EmbeddingSimilarity:
             text = " ".join([card.statement, *card.scope])
             card_vec = self._embed(text)
             self._cache[key] = card_vec
-        return max(0.0, _cosine(self._embed(query), card_vec))
+        return max(0.0, _cosine(self._embed_query(query), card_vec))
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:

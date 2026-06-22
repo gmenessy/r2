@@ -26,10 +26,26 @@ Handler erhalten ein :class:`Request` und geben entweder ein ``dict``
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
+
+# Standard-Obergrenze für Request-Bodies (1 MiB). Schützt vor
+# Memory-Exhaustion durch übergroße POSTs; pro serve()-Aufruf überschreibbar.
+DEFAULT_MAX_BODY_BYTES = 1_048_576
+
+_access_logger = logging.getLogger("brainfump.access")
+
+
+def _ensure_access_handler() -> None:
+    if not _access_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s [access] %(message)s"))
+        _access_logger.addHandler(handler)
+        _access_logger.setLevel(logging.INFO)
 
 __all__ = [
     "HttpError",
@@ -182,8 +198,24 @@ class WebApp:
         return result if isinstance(result, Response) else json_response(result)
 
 
-def serve(app: WebApp, host: str = "0.0.0.0", port: int = 8000) -> ThreadingHTTPServer:
-    """Baut einen ``ThreadingHTTPServer``, der ``app`` bedient."""
+def serve(
+    app: WebApp,
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    access_log: bool | None = None,
+) -> ThreadingHTTPServer:
+    """Baut einen ``ThreadingHTTPServer``, der ``app`` bedient.
+
+    ``max_body_bytes`` deckelt POST-Bodies (sonst ``413``).
+    ``access_log`` aktiviert strukturiertes Zugriffslogging mit Latenz;
+    ``None`` (Default) liest die Umgebungsvariable ``BRAINFUMP_ACCESS_LOG``
+    (alles außer ``""``/``0``/``false`` schaltet es ein).
+    """
+    if access_log is None:
+        access_log = os.environ.get("BRAINFUMP_ACCESS_LOG", "").lower() not in ("", "0", "false")
+    if access_log:
+        _ensure_access_handler()
 
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 (http.server API)
@@ -193,18 +225,37 @@ def serve(app: WebApp, host: str = "0.0.0.0", port: int = 8000) -> ThreadingHTTP
             self._handle("POST")
 
         def _handle(self, method: str) -> None:
+            start = time.perf_counter()
             url = urlparse(self.path)
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
             raw = b""
             if method == "POST":
                 length = int(self.headers.get("Content-Length", 0))
+                if length > max_body_bytes:
+                    self._write(
+                        json_response(
+                            {"error": f"request body too large (>{max_body_bytes} bytes)"}, 413
+                        )
+                    )
+                    self._access(method, url.path, 413, start)
+                    return
                 raw = self.rfile.read(length)
             response = app.dispatch(Request(method, url.path, query, raw))
+            self._write(response)
+            self._access(method, url.path, response.status, start)
+
+        def _write(self, response: Response) -> None:
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(response.body)))
             self.end_headers()
             self.wfile.write(response.body)
+
+        def _access(self, method: str, path: str, status: int, start: float) -> None:
+            if access_log:
+                _access_logger.info(
+                    "%s %s -> %d (%.1f ms)", method, path, status, (time.perf_counter() - start) * 1000
+                )
 
         def log_message(self, *args: Any) -> None:
             pass

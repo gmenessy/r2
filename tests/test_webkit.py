@@ -2,6 +2,7 @@
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -130,6 +131,62 @@ def test_static_serves_file(tmp_path):
     assert response.status == 200
     assert response.body == b"<h1>Hallo</h1>"
     assert response.content_type == "text/html; charset=utf-8"
+
+
+def test_body_size_limit_returns_413():
+    """QW2: übergroße POST-Bodies werden mit 413 abgewiesen."""
+    app = WebApp()
+
+    @app.post("/api/echo")
+    def _echo(request: Request) -> dict:
+        return request.json()
+
+    server = serve(app, host="127.0.0.1", port=0, max_body_bytes=50)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        oversized = json.dumps({"data": "x" * 500}).encode()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/echo",
+            data=oversized,
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(request)
+        assert exc.value.code == 413
+        # Kleiner Body geht weiterhin durch.
+        small = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/echo",
+            data=b'{"ok": 1}',
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(small) as r:
+            assert json.loads(r.read()) == {"ok": 1}
+    finally:
+        server.shutdown()
+
+
+def test_access_log_emits_when_enabled(caplog):
+    """QW3: opt-in Zugriffslogging schreibt Methode, Pfad, Status, Latenz."""
+    app = WebApp()
+    app.route("GET", "/ping", lambda request: {"ok": True})
+    server = serve(app, host="127.0.0.1", port=0, access_log=True)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with caplog.at_level("INFO", logger="brainfump.access"):
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/ping") as r:
+                r.read()
+            # Das Logging läuft im Worker-Thread nach dem Senden der Antwort:
+            # kurz auf den Eintrag warten, statt auf das Timing zu vertrauen.
+            deadline = time.time() + 2.0
+            while time.time() < deadline and not any(
+                "GET /ping -> 200" in m for m in caplog.messages
+            ):
+                time.sleep(0.02)
+        assert any("GET /ping -> 200" in m for m in caplog.messages)
+    finally:
+        server.shutdown()
 
 
 def test_serve_end_to_end():

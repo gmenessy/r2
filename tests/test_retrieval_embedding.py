@@ -73,6 +73,24 @@ def test_embedding_caches_card_vectors():
     assert calls.count("query eins") == 1 and calls.count("query zwei") == 1
 
 
+def test_query_embedded_once_per_search():
+    """QW1: über N Kandidatenkarten darf die Query nur einmal eingebettet
+    werden, nicht einmal pro Karte (sonst N-fache Embedding-Kosten)."""
+    calls: list[str] = []
+
+    def counting_embed(text: str):
+        calls.append(text)
+        return _toy_embed(text)
+
+    store = MemoryCardStore()
+    for i in range(5):
+        store.add(card(f"Zahlung Stripe Variante {i}", case_id="a"))
+    Retriever(store, similarity=EmbeddingSimilarity(counting_embed)).search(
+        "Zahlung anpassen", case_id="a"
+    )
+    assert calls.count("Zahlung anpassen") == 1
+
+
 def test_min_similarity_filters_noise():
     store = MemoryCardStore()
     store.add(card("Zahlung Stripe", case_id="a"))
