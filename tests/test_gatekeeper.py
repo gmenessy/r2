@@ -109,6 +109,27 @@ def test_case_boundary_no_leakage():
     assert not decision.consulted_memories
 
 
+def test_expired_failure_card_does_not_fire():
+    """M1: Eine per valid_to abgelaufene failure-Karte blockiert nicht mehr."""
+    store = make_store()
+    store.add(
+        MemoryCard(
+            memory_type="failure",
+            statement="Alter, abgelaufener Fehlversuch.",
+            case_id="akte_1",
+            valid_from="2020-01-01",
+            valid_to="2020-12-31",  # längst abgelaufen
+            payload={"error_signature": "sig_alt"},
+        )
+    )
+    gate = MemoryGatekeeper(store)
+    decision = gate.check(
+        {"action_type": "apply_fix", "case_id": "akte_1", "error_signature": "sig_alt"}
+    )
+    assert decision.mode == GateMode.ALLOW
+    assert not decision.consulted_memories
+
+
 def test_runtime_rule_violation_warns():
     checker = RuntimeChecker(
         [

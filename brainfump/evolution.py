@@ -85,6 +85,14 @@ class EvolutionMemory:
         target = self.store.get(patch.target_memory)
         if target is None:
             raise KeyError(patch.target_memory)
+        # replace/extend ersetzen die Karte (supersede). Auf eine bereits
+        # superseded/archivierte Karte angewandt würde das die Versionskette
+        # verzweigen (zwei Nachfolger) — daher nur auf der aktiven Spitze zulassen.
+        if patch.patch_type in ("replace", "extend") and target.status != "active":
+            raise ValueError(
+                f"cannot {patch.patch_type} a {target.status} card "
+                f"({patch.target_memory}); patch the active version instead"
+            )
         self._persist(patch)
 
         if patch.patch_type == "replace":
@@ -166,10 +174,15 @@ class EvolutionMemory:
         if resolved is None:
             return None
         if scope is not None:
+            chain_ids = {c.card_id for c in chain}
             for exc in self.store.active(case_id=resolved.case_id, on_date=on_date):
-                if exc.payload.get("exception_to") in {c.card_id for c in chain}:
-                    if scope in exc.scope:
-                        return exc
+                # Case-Scope-Isolation: bei globalen Karten (case_id=None) liefert
+                # active() Karten ALLER Akten — nur Exceptions derselben Akte wie
+                # die aufgelöste Karte dürfen sie überschreiben.
+                if exc.case_id != resolved.case_id:
+                    continue
+                if exc.payload.get("exception_to") in chain_ids and scope in exc.scope:
+                    return exc
         return resolved
 
     def detect_conflicts(self, case_id: str | None = None) -> list[tuple[MemoryCard, MemoryCard]]:

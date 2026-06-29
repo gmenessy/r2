@@ -10,6 +10,7 @@ bevor er handelt.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from enum import IntEnum
 from typing import Any
 
@@ -101,7 +102,9 @@ class MemoryGatekeeper:
         mode = GateMode.ALLOW
 
         # Case-bounded: nur Karten der Akte plus globale DNA werden konsultiert.
-        cards = self.store.active(case_id=case_id)
+        # on_date filtert abgelaufene/noch-nicht-gültige Karten (valid_from/_to),
+        # damit ein abgelaufenes Verbot/Risiko keine erlaubte Aktion blockiert.
+        cards = self.store.active(case_id=case_id, on_date=date.today().isoformat())
 
         # Gate 1: no_repeat_failed_fix — bereits gescheiterte Fixes blockieren.
         signature = action.get("error_signature") or action.get("fix_signature")

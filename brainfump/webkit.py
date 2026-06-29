@@ -204,6 +204,7 @@ def serve(
     port: int = 8000,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     access_log: bool | None = None,
+    read_timeout: float | None = 30.0,
 ) -> ThreadingHTTPServer:
     """Baut einen ``ThreadingHTTPServer``, der ``app`` bedient.
 
@@ -218,6 +219,10 @@ def serve(
         _ensure_access_handler()
 
     class _Handler(BaseHTTPRequestHandler):
+        # Socket-Read-Timeout gegen Slowloris (langsame/teildaten-Verbindungen,
+        # die sonst einen Worker-Thread dauerhaft belegen).
+        timeout = read_timeout
+
         def do_GET(self) -> None:  # noqa: N802 (http.server API)
             self._handle("GET")
 
@@ -230,19 +235,30 @@ def serve(
             query = {k: v[0] for k, v in parse_qs(url.query).items()}
             raw = b""
             if method == "POST":
-                length = int(self.headers.get("Content-Length", 0))
+                # Content-Length defensiv parsen: nicht-numerisch oder negativ
+                # (würde sonst das Body-Limit umgehen und rfile.read(-1) bis EOF
+                # auslösen) -> 400.
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                except (TypeError, ValueError):
+                    length = -1
+                if length < 0:
+                    self._reject(method, url.path, start, 400, "invalid Content-Length")
+                    return
                 if length > max_body_bytes:
-                    self._write(
-                        json_response(
-                            {"error": f"request body too large (>{max_body_bytes} bytes)"}, 413
-                        )
+                    self._reject(
+                        method, url.path, start, 413,
+                        f"request body too large (>{max_body_bytes} bytes)",
                     )
-                    self._access(method, url.path, 413, start)
                     return
                 raw = self.rfile.read(length)
             response = app.dispatch(Request(method, url.path, query, raw))
             self._write(response)
             self._access(method, url.path, response.status, start)
+
+        def _reject(self, method: str, path: str, start: float, status: int, msg: str) -> None:
+            self._write(json_response({"error": msg}, status))
+            self._access(method, path, status, start)
 
         def _write(self, response: Response) -> None:
             self.send_response(response.status)

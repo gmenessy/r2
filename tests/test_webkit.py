@@ -166,6 +166,30 @@ def test_body_size_limit_returns_413():
         server.shutdown()
 
 
+def test_invalid_content_length_rejected_with_400():
+    """K4: nicht-numerischer oder negativer Content-Length → 400, kein Bypass."""
+    app = WebApp()
+    app.route("POST", "/api/echo", lambda request: request.json())
+    server = serve(app, host="127.0.0.1", port=0, max_body_bytes=1000)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        import http.client
+
+        for bad in ("abc", "-1"):
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+            conn.putrequest("POST", "/api/echo")
+            conn.putheader("Content-Type", "application/json")
+            conn.putheader("Content-Length", bad)
+            conn.endheaders()
+            conn.send(b'{"x": 1}')
+            resp = conn.getresponse()
+            assert resp.status == 400, f"Content-Length={bad!r} → {resp.status}"
+            conn.close()
+    finally:
+        server.shutdown()
+
+
 def test_access_log_emits_when_enabled(caplog):
     """QW3: opt-in Zugriffslogging schreibt Methode, Pfad, Status, Latenz."""
     app = WebApp()
