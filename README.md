@@ -112,7 +112,7 @@ Jeder Service bietet `GET /api/health` (für den Docker-`HEALTHCHECK`) und
 
 ```bash
 pip install -e ".[dev]"
-python3 -m pytest --cov      # 119 Tests, Branch-Coverage-Gate (fail_under=85)
+python3 -m pytest --cov      # 138 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~93,9 %)
 python3 -m pyflakes brainfump apps
 ```
 

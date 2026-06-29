@@ -63,7 +63,8 @@ Verifikation: `pyflakes` clean, `pytest` 97/97 grün.
 ### A) Mittelfristige Aufgaben (Features & größeres Refactoring)
 
 > **Sprint-Ergebnis: alle Tickets der Kategorie A abgeschlossen** (Details im
-> Abschnitt 4). Suite von 95 → **119 Tests**, Branch-Coverage **94,7 %**.
+> Abschnitt 4). Suite von 95 → **119 Tests** (Stand M-1…M-5; inzwischen 138
+> nach den Next-Horizon-Sprints), Branch-Coverage ~94 %.
 
 | Ticket | Beschreibung | Aufwand | Status |
 |--------|--------------|---------|--------|
@@ -78,7 +79,7 @@ Verifikation: `pyflakes` clean, `pytest` 97/97 grün.
 | Epic | Beschreibung |
 |------|--------------|
 | E-1 · Persistente Rules Engine | Regeln aktuell nur im RAM (Rekompilierung beim Start). Eigene `rules`-Tabelle mit Versionierung statt Re-Derivation. |
-| E-2 · Skalierbares Retrieval/Graph | Invertierter Index bzw. Vektor-Backend ablösen von O(n)-Scan; dedizierte Graph-Schicht (A-MEM/Zettelkasten) für Konflikte/Abhängigkeiten — beseitigt O(n²). |
+| E-2 · Skalierbares Retrieval/Graph | **Teil 1 erledigt** (lexikalischer invertierter Index `active_by_tokens`, p95 ~48 ms). Offen: ANN/Vektor-Index für Embeddings, dedizierte Graph-Schicht (A-MEM/Zettelkasten), O(n²) in der Consolidation. |
 | E-3 · Wiki-Projektion | Menschenlesbare Memory-Seiten pro Akte (Spec-Abschnitt 7, v0.3). |
 | E-4 · Postgres-Backend | SQLite-Store-Abstraktion für Mehrbenutzer/Mandanten, Migrationen, Nebenläufigkeit. |
 | E-5 · Coding-Agent-Guard als MCP-Server | Echter MCP-Transport statt nur HTTP, damit Coding Agents nativ andocken. |
@@ -141,6 +142,11 @@ Umsetzung der Roadmap aus `docs/ENGINEERING_LOOP_REVIEW.md`.
 - **Embedding-Provider** `brainfump/embeddings.py::HashingEmbedder` —
   deterministisches, abhängigkeitsfreies Feature-Hashing-Embedding
   (L2-normalisiert), Offline-Default und Adapter-Vorbild für echte APIs.
+  _Hinweis (Deep-Dive-Korrektur): ein echter API-`EmbeddingProvider`-Adapter
+  (Anthropic/Local) ist NOCH NICHT umgesetzt — bleibt offenes Ticket._
+- **Bekannter Bug (Deep-Dive):** Der Vektor-Cache-Schlüssel hasht nur das
+  Statement, eingebettet wird aber Statement+Scope → reine Scope-Änderungen
+  werden nicht neu eingebettet. Fix offen (siehe `docs/DEEP_DIVE_REVIEW.md` K5).
 - **Persistenter Vektor-Cache** `SqliteVectorCache` (MutableMapping) —
   in `EmbeddingSimilarity(embed, cache=…)` injizierbar; Card-Vektoren
   überleben Neustarts, statt jedes Mal neu eingebettet zu werden.
