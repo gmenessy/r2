@@ -79,6 +79,20 @@ def test_persistent_cache_avoids_reembedding_after_restart(tmp_path):
     assert len(embeds_total) == 1  # Card NICHT erneut eingebettet
 
 
+def test_scope_change_triggers_reembed(tmp_path):
+    """K5: Der Cache-Key umfasst Statement UND Scope. Eine reine Scope-
+    Änderung muss neu eingebettet werden (sonst veralteter Vektor)."""
+    cache = SqliteVectorCache(str(tmp_path / "vec.db"))
+    sim = EmbeddingSimilarity(HashingEmbedder(dim=64), cache=cache)
+    base = MemoryCard(memory_type="semantic", statement="Zahlung", case_id="a",
+                      card_id="mem_x", scope=("alt",))
+    changed = MemoryCard(memory_type="semantic", statement="Zahlung", case_id="a",
+                         card_id="mem_x", scope=("neu",))
+    sim("q", base)
+    sim("q", changed)
+    assert len(cache) == 2  # zwei verschiedene (statement+scope)-Hashes
+
+
 def test_changed_statement_is_reembedded(tmp_path):
     path = str(tmp_path / "vectors.db")
     cache = SqliteVectorCache(path)

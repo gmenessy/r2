@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterator
+
+from brainfump._locking import locked
 
 EVENT_TYPES = frozenset(
     {
@@ -94,11 +97,13 @@ class EventLog:
     """Append-only Event Log (vfs://events/)."""
 
     def __init__(self, path: str = ":memory:") -> None:
-        # check_same_thread=False: der Gatekeeper-HTTP-Server bedient
-        # Requests in Worker-Threads; Schreibzugriffe sind kurz und commit-en sofort.
+        # check_same_thread=False: der HTTP-Server bedient Requests in
+        # Worker-Threads. Der Zugriff wird über self._lock (@locked) serialisiert.
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
 
+    @locked
     def append(self, event: Event) -> Event:
         self._conn.execute(
             "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -119,12 +124,14 @@ class EventLog:
     def record(self, event_type: str, content: str, **kwargs: Any) -> Event:
         return self.append(Event(event_type=event_type, content=content, **kwargs))
 
+    @locked
     def get(self, event_id: str) -> Event | None:
         row = self._conn.execute(
             "SELECT * FROM events WHERE event_id = ?", (event_id,)
         ).fetchone()
         return self._row_to_event(row) if row else None
 
+    @locked
     def query(
         self,
         case_id: str | None = None,
@@ -148,6 +155,7 @@ class EventLog:
     def __iter__(self) -> Iterator[Event]:
         return iter(self.query())
 
+    @locked
     def __len__(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 

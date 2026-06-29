@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
+from brainfump._locking import locked
 from brainfump.events import utc_now
 from brainfump.memory_cards import MemoryCard, MemoryCardStore
 
@@ -71,9 +73,14 @@ class EvolutionMemory:
 
     def __init__(self, store: MemoryCardStore, path: str = ":memory:") -> None:
         self.store = store
+        # Eigenes Lock für die Patch-Connection. Hält stets nur dieses Lock und
+        # ruft dann store-Methoden (die ihr eigenes Lock nehmen) — nie umgekehrt,
+        # daher keine Lock-Zyklen/Deadlocks.
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
 
+    @locked
     def apply_patch(self, patch: EvolutionPatch) -> MemoryCard | None:
         target = self.store.get(patch.target_memory)
         if target is None:
@@ -125,6 +132,7 @@ class EvolutionMemory:
         self.store.set_valid_to(target.card_id, patch.valid_from)
         return None
 
+    @locked
     def patches_for(self, target_memory: str) -> list[EvolutionPatch]:
         rows = self._conn.execute(
             "SELECT * FROM patches WHERE target_memory = ? ORDER BY valid_from",

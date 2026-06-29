@@ -10,11 +10,13 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
+from brainfump._locking import locked
 from brainfump.events import utc_now
 
 MEMORY_TYPES = frozenset(
@@ -128,6 +130,9 @@ class MemoryCardStore:
     """Memory Card Store (vfs://memory/cards/)."""
 
     def __init__(self, path: str = ":memory:") -> None:
+        # RLock serialisiert Connection- UND Index-Zugriff über die
+        # ThreadingHTTPServer-Worker (siehe brainfump/_locking.py).
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
         # Lazy invertierter Token-Index (Token -> aktive card_ids) als
@@ -150,6 +155,7 @@ class MemoryCardStore:
             self._token_index = index
         return self._token_index
 
+    @locked
     def add(self, card: MemoryCard) -> MemoryCard:
         self._conn.execute(
             "INSERT INTO cards VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -174,12 +180,14 @@ class MemoryCardStore:
         self._invalidate_index()
         return card
 
+    @locked
     def get(self, card_id: str) -> MemoryCard | None:
         row = self._conn.execute(
             "SELECT * FROM cards WHERE card_id = ?", (card_id,)
         ).fetchone()
         return self._row_to_card(row) if row else None
 
+    @locked
     def active(
         self,
         case_id: str | None = None,
@@ -213,6 +221,7 @@ class MemoryCardStore:
             cards = [c for c in cards if c.is_valid_on(on_date)]
         return cards
 
+    @locked
     def active_by_tokens(
         self,
         tokens: "set[str] | frozenset[str]",
@@ -258,6 +267,7 @@ class MemoryCardStore:
         cards.sort(key=lambda c: (c.case_id is None, c.created_at, c.card_id))
         return cards
 
+    @locked
     def set_status(self, card_id: str, status: str) -> None:
         if status not in STATUSES:
             raise ValueError(f"unknown status: {status!r}")
@@ -267,6 +277,7 @@ class MemoryCardStore:
         self._conn.commit()
         self._invalidate_index()
 
+    @locked
     def set_valid_to(self, card_id: str, valid_to: str) -> None:
         self._conn.execute(
             "UPDATE cards SET valid_to = ? WHERE card_id = ?", (valid_to, card_id)
@@ -274,6 +285,7 @@ class MemoryCardStore:
         self._conn.commit()
         self._invalidate_index()
 
+    @locked
     def supersede(self, old_card_id: str, new_card: MemoryCard) -> MemoryCard:
         """Versionierung: Alte Karte wird ersetzt, nie gelöscht."""
         old = self.get(old_card_id)
@@ -283,6 +295,7 @@ class MemoryCardStore:
         self.set_valid_to(old_card_id, new_card.valid_from)
         return self.add(replace(new_card, supersedes=old_card_id))
 
+    @locked
     def history(self, card_id: str) -> list[MemoryCard]:
         """Versionskette einer Karte, älteste zuerst."""
         chain: list[MemoryCard] = []
@@ -292,6 +305,7 @@ class MemoryCardStore:
             current = self.get(current.supersedes) if current.supersedes else None
         return list(reversed(chain))
 
+    @locked
     def successor_of(self, card_id: str) -> MemoryCard | None:
         """Die Karte, die ``card_id`` direkt ersetzt hat (oder None)."""
         row = self._conn.execute(
@@ -299,6 +313,7 @@ class MemoryCardStore:
         ).fetchone()
         return self.get(row[0]) if row else None
 
+    @locked
     def __len__(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
 

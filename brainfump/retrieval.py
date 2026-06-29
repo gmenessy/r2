@@ -90,9 +90,11 @@ class EmbeddingSimilarity:
 
     @staticmethod
     def _card_key(card: MemoryCard) -> str:
-        # Statement-Hash im Schlüssel: eine geänderte Aussage wird neu
-        # eingebettet, eine unveränderte aus dem Cache bedient.
-        digest = hashlib.sha1(card.statement.encode("utf-8")).hexdigest()[:16]
+        # Hash über Statement UND Scope — exakt das, was unten eingebettet wird
+        # (statement + scope). So wird eine reine Scope-Änderung neu eingebettet
+        # statt aus dem Cache veraltet bedient zu werden.
+        material = "\x00".join([card.statement, *card.scope])
+        digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
         return f"{card.card_id}:{digest}"
 
     def __call__(self, query: str, card: MemoryCard) -> float:

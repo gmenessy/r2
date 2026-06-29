@@ -17,15 +17,19 @@ Alle hier gelisteten Funde sind am Code verifiziert (file:line)._
 
 ## Befunde (verifiziert, priorisiert)
 
+> **Status Fix-Sprint 1:** K1, K2, K3, K5 sind **behoben** (siehe ✅), abgesichert
+> durch Regressionstests inkl. Nebenläufigkeits-Stresstest. Suite: 142 grün
+> (stabil unter `pytest --cov`). Offen bleiben K4, K6 und die MITTEL/NIEDRIG-Punkte.
+
 ### KRITISCH
 
 | # | Ort | Problem | Auswirkung | Fix |
 |---|-----|---------|-----------|-----|
-| K1 | `memory_cards.py` `_ensure_index`/`_invalidate_index`; `webkit.serve` | Geteilter `_token_index` (dict) wird lock-frei gelesen/gebaut, während Schreibpfade ihn auf `None` setzen — über viele HTTP-Threads | Race → `dict changed size during iteration`, halb gebaute Indizes, verlorene Treffer unter Last | `threading.Lock` um Index-Bau + Schreibpfade |
-| K2 | `memory_cards.py:131`, `embeddings.py:64` | Eine SQLite-Connection mit `check_same_thread=False`, parallel aus mehreren Threads | `sqlite3.ProgrammingError`/`database locked` bei gleichzeitigen Requests | Connection-Lock oder `threading.local`-Connection-per-Thread |
-| K3 | `optimizer.py:169` | `must_contain`/`must_not_contain`-Regel hat `condition={"case_id":…}` ohne `action_type` → feuert bei *jedem* Gate-Aufruf | Nach einer einzigen Stil-Korrektur liefert das Pre-Test-Gate (`check_variant`) dauerhaft `warn` statt `allow`/`block` (verifiziert) | `condition` um `{"action_type":"validate_output"}` ergänzen |
+| K1 ✅ behoben | `memory_cards.py` `_ensure_index`/`_invalidate_index`; `webkit.serve` | Geteilter `_token_index` (dict) wird lock-frei gelesen/gebaut, während Schreibpfade ihn auf `None` setzen — über viele HTTP-Threads | Race → `dict changed size during iteration`, halb gebaute Indizes, verlorene Treffer unter Last | `threading.Lock` um Index-Bau + Schreibpfade |
+| K2 ✅ behoben | `memory_cards.py:131`, `embeddings.py:64` | Eine SQLite-Connection mit `check_same_thread=False`, parallel aus mehreren Threads | `sqlite3.ProgrammingError`/`database locked` bei gleichzeitigen Requests | Connection-Lock oder `threading.local`-Connection-per-Thread |
+| K3 ✅ behoben | `optimizer.py:169` | `must_contain`/`must_not_contain`-Regel hat `condition={"case_id":…}` ohne `action_type` → feuert bei *jedem* Gate-Aufruf | Nach einer einzigen Stil-Korrektur liefert das Pre-Test-Gate (`check_variant`) dauerhaft `warn` statt `allow`/`block` (verifiziert) | `condition` um `{"action_type":"validate_output"}` ergänzen |
 | K4 | `webkit.py:233` | `int(Content-Length)` ungeprüft: nicht-numerisch → 500; negativ umgeht Body-Limit, `rfile.read(-1)` liest bis EOF | Trivialer DoS / Body-Limit-Bypass | `Content-Length` defensiv parsen, `<0`→400 |
-| K5 | `retrieval.py:95` vs `:103` | `_card_key` hasht nur `statement`, eingebettet wird `statement+scope` | Reine Scope-Änderung liefert veralteten Embedding-Vektor (Korrektheit) | Scope in den Cache-Key aufnehmen |
+| K5 ✅ behoben | `retrieval.py:95` vs `:103` | `_card_key` hasht nur `statement`, eingebettet wird `statement+scope` | Reine Scope-Änderung liefert veralteten Embedding-Vektor (Korrektheit) | Scope in den Cache-Key aufnehmen |
 | K6 | `evolution.py:161` | `resolve` einer globalen Karte ruft `active(case_id=None)` → liefert Karten *aller* Akten; fremde Scope-Exception kann globale DNA überschreiben | Case-Scope-Isolation (Prinzip 3.3) verletzt | Exception-Scan auf `exc.case_id == resolved.case_id` filtern |
 
 ### MITTEL

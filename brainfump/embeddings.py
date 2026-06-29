@@ -20,7 +20,10 @@ import json
 import math
 import re
 import sqlite3
+import threading
 from typing import Iterator, MutableMapping, Sequence
+
+from brainfump._locking import locked
 
 _TOKEN = re.compile(r"[a-zäöüß0-9]+", re.IGNORECASE)
 
@@ -61,12 +64,14 @@ class SqliteVectorCache(MutableMapping):
     """
 
     def __init__(self, path: str = ":memory:") -> None:
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS vectors (key TEXT PRIMARY KEY, vec TEXT NOT NULL)"
         )
         self._conn.commit()
 
+    @locked
     def __getitem__(self, key: str) -> Sequence[float]:
         row = self._conn.execute(
             "SELECT vec FROM vectors WHERE key = ?", (key,)
@@ -75,6 +80,7 @@ class SqliteVectorCache(MutableMapping):
             raise KeyError(key)
         return json.loads(row[0])
 
+    @locked
     def __setitem__(self, key: str, value: Sequence[float]) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO vectors (key, vec) VALUES (?, ?)",
@@ -82,14 +88,17 @@ class SqliteVectorCache(MutableMapping):
         )
         self._conn.commit()
 
+    @locked
     def __delitem__(self, key: str) -> None:
         cur = self._conn.execute("DELETE FROM vectors WHERE key = ?", (key,))
         self._conn.commit()
         if cur.rowcount == 0:
             raise KeyError(key)
 
+    @locked
     def __iter__(self) -> Iterator[str]:
-        return (row[0] for row in self._conn.execute("SELECT key FROM vectors"))
+        return iter([row[0] for row in self._conn.execute("SELECT key FROM vectors")])
 
+    @locked
     def __len__(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM vectors").fetchone()[0]

@@ -166,7 +166,11 @@ class PromptOptimizer:
                 continue
             rule = Rule(
                 rule_id=f"{check_name}_{event.event_id[-6:]}",
-                condition={"case_id": event.case_id},
+                # action_type-Filter: die Output-Regel gilt NUR beim Validieren
+                # eines generierten Outputs — sonst würde sie auch das Pre-Test-
+                # Gate (check_variant) treffen, wo es kein 'output'-Feld gibt,
+                # und dort jede Variante fälschlich als 'warn' melden.
+                condition={"case_id": event.case_id, "action_type": "validate_output"},
                 check={check_name: {"field": "output", "values": list(values)}},
                 severity=checks.get("severity", "warning"),
                 message=f"Korrektur: {event.content}",

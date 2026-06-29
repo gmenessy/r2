@@ -73,6 +73,19 @@ def test_correction_compiles_to_output_rule():
     assert opt.validate_output("proj", "Hi, hier ist deine Zusammenfassung.")["mode"] == "allow"
 
 
+def test_must_contain_correction_does_not_poison_pretest_gate():
+    """K3: Eine must_contain-Korrektur darf NUR validate_output betreffen,
+    nicht das Pre-Test-Gate (check_variant) jeder neuen Variante."""
+    opt = make_optimizer()
+    opt.add_correction("p", "Antwort muss Quellen nennen", must_contain=["Quelle"])
+    # Pre-Test-Gate für eine unbekannte Variante: kein gescheiterter Fix → allow.
+    result = opt.check_variant("p", "Komplett neue Prompt-Variante")
+    assert result["decision"]["mode"] == "allow"
+    # Die Output-Validierung erzwingt die Regel weiterhin.
+    assert opt.validate_output("p", "Antwort ohne Beleg")["mode"] == "warn"
+    assert opt.validate_output("p", "Antwort mit Quelle X")["mode"] == "allow"
+
+
 def test_correction_rules_are_project_scoped():
     opt = make_optimizer()
     opt.add_correction("proj_a", "kein Denglisch", must_not_contain=["committen"])
