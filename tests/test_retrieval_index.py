@@ -30,12 +30,13 @@ def _populate_random(store, n, seed=1):
 
 
 def test_index_scores_same_cards_as_full_scan():
-    """Der Vorfilter scort exakt dieselbe Kartenmenge mit denselben Scores.
+    """Der Vorfilter scort exakt dieselbe Kartenmenge wie der volle Scan.
 
-    Verglichen wird die Menge gescorter Karten und ihr Score (auf 6 Stellen);
-    die Mikro-Reihenfolge bei quasi gleichem Score ist nicht vergleichbar, da
-    ``recency`` über ``datetime.now()`` zwischen zwei Aufrufen leicht driftet
-    — das ist unabhängig vom Index.
+    Verglichen wird die *Menge* gescorter Karten (deterministisch: Score > 0
+    ⇔ geteiltes Token, unabhängig von der Zeit) und der Score je Karte mit
+    grober Toleranz. Eine exakte Score-Gleichheit ist NICHT prüfbar, weil
+    ``recency`` über ``datetime.now()`` zwischen den beiden ``search()``-
+    Aufrufen leicht driftet — das ist unabhängig vom Index.
     """
     store = MemoryCardStore()
     _populate_random(store, 300)
@@ -46,10 +47,14 @@ def test_index_scores_same_cards_as_full_scan():
     for _ in range(25):
         query = " ".join(rng.sample(vocab, k=rng.randint(1, 3)))
         for case_id in ("a", "b", None):
-            # k hoch genug, um die volle Treffermenge zu vergleichen.
-            di = {s.card.card_id: round(s.score, 6) for s in indexed.search(query, case_id=case_id, k=9999)}
-            df = {s.card.card_id: round(s.score, 6) for s in full.search(query, case_id=case_id, k=9999)}
-            assert di == df
+            # k hoch genug, um die volle Treffermenge zu erfassen.
+            di = {s.card.card_id: s.score for s in indexed.search(query, case_id=case_id, k=9999)}
+            df = {s.card.card_id: s.score for s in full.search(query, case_id=case_id, k=9999)}
+            # Exakt dieselben Karten …
+            assert set(di) == set(df)
+            # … mit praktisch gleichem Score (Toleranz >> recency-Drift).
+            for card_id in di:
+                assert abs(di[card_id] - df[card_id]) < 1e-3
 
 
 def test_index_invalidated_on_add():
