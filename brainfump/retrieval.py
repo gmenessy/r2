@@ -73,6 +73,10 @@ class EmbeddingSimilarity:
         cache: "MutableMapping[str, Sequence[float]] | None" = None,
     ) -> None:
         self._embed = embed
+        # Fingerprint des Embedders wandert in den Cache-Schlüssel: bei einem
+        # Verfahrens-/Dimensionswechsel werden persistierte Vektoren nicht
+        # stillschweigend wiederverwendet, sondern neu eingebettet.
+        self._fingerprint = getattr(embed, "fingerprint", "")
         # Card-Vektoren: injizierbar (z. B. SqliteVectorCache) für Persistenz
         # über Neustarts hinweg; Default ist ein RAM-dict.
         self._cache: MutableMapping[str, Sequence[float]] = {} if cache is None else cache
@@ -88,14 +92,13 @@ class EmbeddingSimilarity:
             self._query_memo = (query, cached_vec)
         return cached_vec
 
-    @staticmethod
-    def _card_key(card: MemoryCard) -> str:
+    def _card_key(self, card: MemoryCard) -> str:
         # Hash über Statement UND Scope — exakt das, was unten eingebettet wird
         # (statement + scope). So wird eine reine Scope-Änderung neu eingebettet
         # statt aus dem Cache veraltet bedient zu werden.
         material = "\x00".join([card.statement, *card.scope])
         digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:16]
-        return f"{card.card_id}:{digest}"
+        return f"{self._fingerprint}:{card.card_id}:{digest}"
 
     def __call__(self, query: str, card: MemoryCard) -> float:
         key = self._card_key(card)
@@ -178,22 +181,28 @@ class Retriever:
         on_date: str | None = None,
     ) -> list[ScoredCard]:
         on_date = on_date or date.today().isoformat()
+        # Ein Zeitstempel pro Suche: macht die Scores innerhalb (und zwischen
+        # zeitnahen) Suchläufen deterministisch, statt pro Karte zu driften.
+        now = datetime.now(timezone.utc)
         candidates = self._candidates(query, case_id, include_global, on_date)
         scored = [
-            ScoredCard(card=c, score=self._score(query, c, case_id)) for c in candidates
+            ScoredCard(card=c, score=self._score(query, c, case_id, now))
+            for c in candidates
         ]
         scored = [s for s in scored if s.score > 0]
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:k]
 
-    def _score(self, query: str, card: MemoryCard, case_id: str | None) -> float:
+    def _score(
+        self, query: str, card: MemoryCard, case_id: str | None, now: datetime
+    ) -> float:
         w = self.weights
         semantic = self.similarity(query, card)
         if semantic <= self.min_similarity:
             return 0.0
 
         case_relevance = 1.0 if (case_id is not None and card.case_id == case_id) else 0.0
-        recency = self._recency(card.created_at)
+        recency = self._recency(card.created_at, now)
         risk_weight = 1.0 if card.memory_type in ("risk", "failure") else 0.0
         governance = 1.0 if card.memory_type == "governance" else 0.0
 
@@ -208,9 +217,9 @@ class Retriever:
         )
 
     @staticmethod
-    def _recency(created_at: str, half_life_days: float = 30.0) -> float:
+    def _recency(created_at: str, now: datetime, half_life_days: float = 30.0) -> float:
         created = datetime.fromisoformat(created_at)
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
-        age_days = (datetime.now(timezone.utc) - created).total_seconds() / 86400
+        age_days = (now - created).total_seconds() / 86400
         return 0.5 ** (max(age_days, 0.0) / half_life_days)

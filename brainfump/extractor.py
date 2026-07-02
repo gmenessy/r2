@@ -40,7 +40,10 @@ class MemoryExtractor:
             else:
                 return None
 
-        scope = tuple(event.payload.get("scope", ()))
+        raw_scope = event.payload.get("scope", ())
+        # String-scope tolerieren: "frontend" wäre sonst das Zeichen-Tupel
+        # ('f','r',…) und würde Index/Retrieval mit Müll-Tokens füllen.
+        scope = (raw_scope,) if isinstance(raw_scope, str) else tuple(raw_scope)
         payload = {
             k: v for k, v in event.payload.items() if k not in ("scope", "memorable")
         }

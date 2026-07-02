@@ -242,10 +242,21 @@ class MemoryCardStore:
         for token in tokens:
             candidate_ids |= index.get(token, set())
 
+        # Kandidaten in einem Batch-SELECT laden statt N+1 get()-Aufrufen —
+        # gechunkt, weil SQLite die Zahl der Platzhalter begrenzt (~999).
+        loaded: list[MemoryCard] = []
+        ids = list(candidate_ids)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            placeholders = ",".join("?" * len(chunk))
+            rows = self._conn.execute(
+                f"SELECT * FROM cards WHERE card_id IN ({placeholders})", chunk
+            )
+            loaded.extend(self._row_to_card(r) for r in rows)
+
         cards: list[MemoryCard] = []
-        for card_id in candidate_ids:
-            card = self.get(card_id)
-            if card is None or card.status != "active":
+        for card in loaded:
+            if card.status != "active":
                 continue
             if memory_type is not None and card.memory_type != memory_type:
                 continue

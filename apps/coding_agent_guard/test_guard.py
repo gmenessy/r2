@@ -104,6 +104,92 @@ def test_stats_count_interventions():
     assert stats["interventions"] == 1
 
 
+def test_fragile_file_report_without_file_raises_clear_error():
+    """M6: fehlende files/file → klare ValueError statt nacktem KeyError."""
+    with pytest.raises(ValueError, match="fragile_file"):
+        make_guard().report("repo_a", "fragile_file", "fragil, aber ohne Datei")
+
+
+def test_pre_edit_hook_blocks_suggest_alternative():
+    """M3: Der Hook muss auch bei suggest_alternative blockieren (Exit 2) —
+    das ist genau der Fall 'gescheiterter Fix mit bekannter Alternative'."""
+    import json as _json
+    import os
+    import subprocess
+    import sys
+    import threading
+
+    guard = make_guard()
+    guard.report(
+        "hookrepo",
+        "fragile_file",
+        "Fragile Datei.",
+        files=["legacy.py"],
+    )
+    guard.report(
+        "hookrepo",
+        "failed_attempt",
+        "Fix scheiterte.",
+        error_signature="sig_hook",
+        alternative="Circuit Breaker.",
+    )
+    server = create_server(guard, host="127.0.0.1", port=0)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    hook = os.path.join(os.path.dirname(__file__), "hooks", "pre_edit_gate.py")
+
+    def run_hook(file_path):
+        hook_input = _json.dumps({"tool_input": {"file_path": file_path}, "cwd": "/x"})
+        return subprocess.run(
+            [sys.executable, hook],
+            input=hook_input,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GUARD_URL": f"http://127.0.0.1:{port}", "GUARD_REPO": "hookrepo"},
+        )
+
+    try:
+        # fragile Datei → require_review → Exit 2
+        fragile = run_hook("legacy.py")
+        assert fragile.returncode == 2, fragile.stderr
+        # unbekannte Datei → allow → Exit 0
+        assert run_hook("harmlos.py").returncode == 0
+    finally:
+        server.shutdown()
+
+    # suggest_alternative direkt: Fake-Gate mit vorgegebener Antwort.
+    from brainfump.webkit import WebApp, serve
+
+    app = WebApp()
+    app.route(
+        "POST",
+        "/api/gate",
+        lambda request: {
+            "mode": "suggest_alternative",
+            "findings": [{"gate": "no_repeat_failed_fix", "severity": "high",
+                          "message": "Fix scheiterte bereits."}],
+            "suggested_alternative": "Circuit Breaker.",
+        },
+    )
+    fake = serve(app, host="127.0.0.1", port=0)
+    fake_port = fake.server_address[1]
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    try:
+        hook_input = _json.dumps({"tool_input": {"file_path": "x.py"}, "cwd": "/x"})
+        result = subprocess.run(
+            [sys.executable, hook],
+            input=hook_input,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GUARD_URL": f"http://127.0.0.1:{fake_port}", "GUARD_REPO": "r"},
+        )
+        assert result.returncode == 2, result.stderr
+        assert "Circuit Breaker" in result.stderr
+    finally:
+        fake.shutdown()
+
+
 def test_http_roundtrip():
     guard = make_guard()
     server = create_server(guard, host="127.0.0.1", port=0)

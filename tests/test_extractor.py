@@ -60,6 +60,15 @@ def test_memorable_episodic_event_produces_card():
     assert card.memory_type == "episodic"
 
 
+def test_string_scope_is_normalized():
+    """Hygiene: payload scope="frontend" (String) wird zu ("frontend",),
+    nicht zum Zeichen-Tupel ('f','r',…)."""
+    log, store, extractor = make_kernel_parts()
+    event = log.record("decision", "X", payload={"scope": "frontend"})
+    card = extractor.extract(event)
+    assert card.scope == ("frontend",)
+
+
 def test_extract_all_persists_cards():
     log, store, extractor = make_kernel_parts()
     log.record("decision", "A")

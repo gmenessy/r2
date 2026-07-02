@@ -17,10 +17,15 @@ Alle hier gelisteten Funde sind am Code verifiziert (file:line)._
 
 ## Befunde (verifiziert, priorisiert)
 
-> **Status Fix-Sprints 1+2:** K1, K2, K3, K5 (Sprint 1) und K4, K6, M1, M4, M5
-> (Sprint 2) sind **behoben** (siehe ✅), je mit Regressionstests inkl.
-> Nebenläufigkeits-Stresstest. Suite: **146 grün**, stabil unter `pytest --cov`,
-> Coverage 94,4 %. Offen: M2/M3/M6/M7 und die NIEDRIG-Punkte.
+> **Status Fix-Sprints 1–3:** ALLE KRITISCH- und MITTEL-Funde (K1–K6, M1–M7)
+> sind **behoben**, je mit Regressionstests. Aus den NIEDRIG-Punkten erledigt:
+> recency-Determinismus (now einmal pro search), MD5→blake2b + Embedder-
+> Fingerprint im Vektor-Cache-Key, generische 500er (Details nur ins Log),
+> severity-Durchreichung im House-Server, String-scope-Normalisierung.
+> Suite: **150 grün**, stabil unter `pytest --cov`, Coverage 94,5 %.
+> Bewusst offen: O(n²)-Blocking der Offline-Consolidation, scope-Parameter-
+> Asymmetrie in `active_by_tokens` (vom Retriever ungenutzt), `0.0.0.0`-Default
+> (nötig für Docker).
 
 ### KRITISCH
 
@@ -38,20 +43,20 @@ Alle hier gelisteten Funde sind am Code verifiziert (file:line)._
 | # | Ort | Problem | Fix |
 |---|-----|---------|-----|
 | M1 ✅ behoben | `gatekeeper.py:104` | Gates rufen `active(case_id=…)` ohne `on_date` → abgelaufene (per `valid_to`) Verbote/Risiken feuern weiter | `on_date=date.today()` übergeben |
-| M2 | `memory_cards.py:237` | `active_by_tokens` macht N+1 `get()` (ein SELECT pro Kandidat) → kann langsamer als Vollscan werden | `SELECT … WHERE card_id IN (…)` |
-| M3 | `pre_edit_gate.py:59` | Hook blockt nur `block`/`require_review`; `suggest_alternative` (Hauptfall „gescheiterter Fix") → Exit 0, Edit läuft durch | `suggest_alternative` in die blockierende Menge |
+| M2 ✅ behoben | `memory_cards.py:237` | `active_by_tokens` macht N+1 `get()` (ein SELECT pro Kandidat) → kann langsamer als Vollscan werden | `SELECT … WHERE card_id IN (…)` |
+| M3 ✅ behoben | `pre_edit_gate.py:59` | Hook blockt nur `block`/`require_review`; `suggest_alternative` (Hauptfall „gescheiterter Fix") → Exit 0, Edit läuft durch | `suggest_alternative` in die blockierende Menge |
 | M4 ✅ behoben | `evolution.py:77` | `apply_patch` prüft `target.status` nicht → zweiter Patch auf superseded Karte verzweigt die Versionskette | `if target.status!="active": raise` |
 | M5 ✅ behoben | `webkit.py:242` | Kein Read-Timeout → Slowloris hält Worker-Threads | `connection.settimeout(...)`, gechunkt lesen |
-| M6 | `guard.py:49` | `report("fragile_file")` ohne `files`/`file` → nackter `KeyError` (nur durch webkit→400 abgefangen) | explizit `require`/`HttpError` |
-| M7 | `consolidation.py:90` | `_contradicts` bestimmt Negation global pro Statement → Falsch-Positive setzen Karten irrtümlich auf `contradicted` | konservativer schwellen / Negation lokal |
+| M6 ✅ behoben | `guard.py:49` | `report("fragile_file")` ohne `files`/`file` → nackter `KeyError` (nur durch webkit→400 abgefangen) | explizit `require`/`HttpError` |
+| M7 ✅ behoben | `consolidation.py:90` | `_contradicts` bestimmt Negation global pro Statement → Falsch-Positive setzen Karten irrtümlich auf `contradicted` | konservativer schwellen / Negation lokal |
 
 ### NIEDRIG (Auswahl)
-- `retrieval.py:213` `recency` nutzt `datetime.now()` pro Scoring → Scores nicht reproduzierbar (Wurzel des gefixten CI-Flakes); `now` einmal pro `search()` bestimmen.
-- `embeddings.py:48` MD5 im Heißpfad → schneller Nicht-Krypto-Hash genügt.
+- ✅ `recency`-Determinismus behoben (`now` einmal pro `search()`).
+- ✅ MD5→blake2b umgestellt; Embedder-Fingerprint im Cache-Key verhindert Vektor-Mischung nach Verfahrenswechsel. (Messung: Embedding-Latenz bleibt ~gleich — dominiert von den Python-Vektor-Ops, nicht vom Hash.)
 - `consolidation.py` Dedupe/Konflikt sind O(n²) und mutieren während des Scans (offline tolerierbar).
-- `extractor.py:43` String-`scope` wird zu Zeichen-Tupel; `memory_cards.active_by_tokens` ignoriert den `scope`-Filter (Asymmetrie zu `active`).
-- `webkit.serve` default-bindet `0.0.0.0`; 500-Antworten spiegeln rohe Exception-Strings.
-- `house/server.py` reicht `severity` nicht durch; uneinheitliche Default-Namen (`default` vs `wohnzimmer`).
+- ✅ String-`scope` wird normalisiert. Offen: `active_by_tokens` ohne `scope`-Parameter (vom Retriever ungenutzt, dokumentierte Asymmetrie).
+- ✅ 500-Antworten generisch (Details nur ins Log). `0.0.0.0`-Default bleibt bewusst (Docker).
+- ✅ `severity` wird durchgereicht. Default-Namen (`default` vs `wohnzimmer`) bleiben bewusst app-spezifisch.
 
 ## Doku-/Sprint-Plan-Abgleich
 

@@ -45,10 +45,18 @@ class HashingEmbedder:
             raise ValueError("dim must be positive")
         self.dim = dim
 
+    @property
+    def fingerprint(self) -> str:
+        """Identität des Embedding-Verfahrens für Cache-Schlüssel: Vektoren
+        verschiedener Verfahren/Dimensionen dürfen nie gemischt werden."""
+        return f"hashing-blake2b-{self.dim}"
+
     def __call__(self, text: str) -> list[float]:
         vec = [0.0] * self.dim
         for token in _tokens(text):
-            digest = hashlib.md5(token.encode("utf-8")).digest()
+            # blake2b statt MD5: deutlich schneller im Heißpfad, gleich
+            # deterministisch; Krypto-Eigenschaften braucht Hashing hier nicht.
+            digest = hashlib.blake2b(token.encode("utf-8"), digest_size=5).digest()
             bucket = int.from_bytes(digest[:4], "big") % self.dim
             sign = 1.0 if digest[4] & 1 else -1.0
             vec[bucket] += sign

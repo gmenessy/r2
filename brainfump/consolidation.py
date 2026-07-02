@@ -97,7 +97,11 @@ class Consolidator:
         union = tokens_a | tokens_b
         if not union:
             return False
-        return len(tokens_a & tokens_b) / len(union) >= 0.5
+        # Konservative Schwelle: contradicted legt beide Karten still, ein
+        # Falsch-Positiv ist also teuer. Die Negation wird global pro Statement
+        # erkannt — bei Mehrsatz-Statements mit nur teilweiser Überlappung
+        # (z. B. gemeinsames Thema, verschiedene Aussagen) wäre 0.5 zu lax.
+        return len(tokens_a & tokens_b) / len(union) >= 0.8
 
     def _archive_stale(
         self,

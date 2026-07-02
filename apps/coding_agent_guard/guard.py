@@ -46,7 +46,14 @@ class CodingAgentGuard:
         mit payload {"fragile_files": [...]}.
         """
         if report_type == "fragile_file":
-            files = payload.pop("files", None) or [payload.pop("file")]
+            files = payload.pop("files", None)
+            if not files:
+                single = payload.pop("file", None)
+                if not single:
+                    raise ValueError(
+                        "report_type 'fragile_file' requires payload 'files' (list) or 'file'"
+                    )
+                files = [single]
             event = self.kernel.record(
                 "risk_marker",
                 content or f"Fragile Datei(en): {files}",

@@ -103,6 +103,32 @@ def test_contradiction_detection_flags_both_cards():
     assert store.get(b.card_id).status == "contradicted"
 
 
+def test_multiclause_statements_are_not_false_contradictions():
+    """M7: Mehrsatz-Statements mit gemeinsamem Thema, aber nur teilweiser
+    Überlappung dürfen NICHT als Widerspruch stillgelegt werden."""
+    store = MemoryCardStore()
+    a = store.add(
+        MemoryCard(
+            memory_type="semantic",
+            statement="Frontend nutzt Vanilla JS und das Deployment läuft über Docker Compose",
+            case_id="akte_1",
+            scope=("frontend",),
+        )
+    )
+    b = store.add(
+        MemoryCard(
+            memory_type="semantic",
+            statement="Frontend Tests laufen nicht über Docker sondern lokal mit pytest",
+            case_id="akte_1",
+            scope=("frontend",),
+        )
+    )
+    report = Consolidator(store).consolidate(case_id="akte_1")
+    assert report.contradictions == []
+    assert store.get(a.card_id).status == "active"
+    assert store.get(b.card_id).status == "active"
+
+
 def test_expired_cards_archived():
     store = MemoryCardStore()
     card = store.add(

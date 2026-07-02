@@ -73,7 +73,12 @@ def build_app(house: MemoryHouse) -> WebApp:
     def _rules(request: Request) -> dict:
         body = request.json()
         require(body, "text", "forbidden_action")
-        return house.add_house_rule(body["text"], body["forbidden_action"], when=body.get("when"))
+        return house.add_house_rule(
+            body["text"],
+            body["forbidden_action"],
+            when=body.get("when"),
+            severity=body.get("severity", "high"),
+        )
 
     @app.post("/api/modes")
     def _modes(request: Request) -> dict:

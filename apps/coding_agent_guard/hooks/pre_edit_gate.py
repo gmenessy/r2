@@ -56,7 +56,10 @@ def main() -> int:
         print(f"[{decision['mode']}] {finding['message']}", file=sys.stderr)
     if decision.get("suggested_alternative"):
         print(f"Alternative: {decision['suggested_alternative']}", file=sys.stderr)
-    return 2 if decision["mode"] in ("block", "require_review") else 0
+    # suggest_alternative blockiert ebenfalls: das ist genau der Fall
+    # "bereits gescheiterter Fix mit bekannter Alternative" — der Edit soll
+    # gestoppt und die Alternative als Feedback gezeigt werden.
+    return 2 if decision["mode"] in ("block", "require_review", "suggest_alternative") else 0
 
 
 if __name__ == "__main__":

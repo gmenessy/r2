@@ -193,8 +193,13 @@ class WebApp:
             return json_response({"error": str(exc)}, exc.status)
         except (ValueError, KeyError) as exc:
             return json_response({"error": str(exc)}, 400)
-        except Exception as exc:  # pragma: no cover - defensive
-            return json_response({"error": str(exc)}, 500)
+        except Exception:  # pragma: no cover - defensive
+            # Interne Details gehören ins Log, nicht in die Antwort
+            # (Information Disclosure).
+            logging.getLogger("brainfump.webkit").exception(
+                "unhandled error in %s %s", request.method, request.path
+            )
+            return json_response({"error": "internal server error"}, 500)
         return result if isinstance(result, Response) else json_response(result)
 
 
