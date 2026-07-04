@@ -157,6 +157,47 @@ def test_runtime_rule_violation_warns():
     assert decision.findings[0].gate == "runtime_rule"
 
 
+def test_signature_matching_is_normalized():
+    """Matching-Härtung: triviale Signatur-Mutationen (Case, Whitespace)
+    umgehen das Failure-Gate nicht mehr."""
+    store = make_store()
+    store.add(
+        MemoryCard(
+            memory_type="failure",
+            statement="Retry scheiterte.",
+            case_id="akte_1",
+            payload={"error_signature": "TimeoutError: gateway"},
+        )
+    )
+    gate = MemoryGatekeeper(store)
+    for mutated in ("TimeoutError: gateway ", "  timeouterror:   GATEWAY", "TIMEOUTERROR: gateway"):
+        d = gate.check({"action_type": "apply_fix", "case_id": "akte_1", "error_signature": mutated})
+        assert d.mode == GateMode.BLOCK, mutated
+    # Wirklich andere Signatur bleibt erlaubt (kein Overblocking).
+    other = gate.check({"action_type": "apply_fix", "case_id": "akte_1",
+                        "error_signature": "ValueError: parse"})
+    assert other.mode == GateMode.ALLOW
+
+
+def test_governance_pattern_blocks_renamed_action():
+    """Matching-Härtung: ein forbidden_action_pattern fängt umbenannte,
+    semantisch gleiche Aktionen."""
+    store = make_store()
+    store.add(
+        MemoryCard(
+            memory_type="governance",
+            statement="Keine destruktiven Aktionen auf Produktionsdaten.",
+            case_id=None,
+            payload={"forbidden_action_patterns": [r"(delete|drop|purge).*(prod|production)"]},
+        )
+    )
+    gate = MemoryGatekeeper(store)
+    for act in ("delete_production_data", "drop_prod_tables", "purge_production_cache"):
+        assert gate.check({"action_type": act, "case_id": "akte_1"}).mode == GateMode.BLOCK, act
+    # Harmlose Aktion bleibt frei.
+    assert gate.check({"action_type": "read_prod_config", "case_id": "akte_1"}).mode == GateMode.ALLOW
+
+
 def test_highest_mode_wins():
     store = make_store()
     store.add(

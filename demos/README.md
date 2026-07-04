@@ -35,23 +35,28 @@ ausgeführt und am Ergebnis gemessen (🛡 abgewehrt / ☠ durchgekommen). Diese
 Demo lief den **Trust-Layer** (`brainfump/trust.py`) erst als offene Lücke —
 inzwischen ist er implementiert und hier aktiv (`angreifer`-Trust = 0.1):
 
-| # | Angriff | ohne Trust | mit Trust-Layer |
-|---|---------|-----------|-----------------|
+| # | Angriff | ohne Trust | Trust + Matching |
+|---|---------|-----------|------------------|
 | 1 | Cross-Case-Leak | 🛡 | 🛡 Case-Isolation |
-| 2 | Failure-Gate via Signatur-Mutation | ☠ | ☠ *Matching-Problem* |
-| 3 | Governance-Bypass via Umbenennung | ☠ | ☠ *Matching-Problem* |
+| 2 | Failure-Gate via Signatur-Mutation | ☠ | 🛡 Signatur-Normalisierung |
+| 3 | Governance-Bypass via Umbenennung | ☠ | 🛡 Governance-Muster |
 | 4 | systemweite Sperre via globale DNA | ☠ | 🛡 Autorisierung ≥0.9 |
 | 5 | Wahres Wissen per Widerspruch löschen | ☠ | 🛡 trust-gewichtet |
 | 6 | bösartige „Alternative" unterschieben | ☠ | 🛡 zurückgehalten <0.7 |
 | 7 | Build-Sabotage via Korrektur | ☠ | 🛡 nicht erzwungen <0.7 |
 
-**Bilanz: 1/7 → 5/7 abgewehrt.** Der Trust-Layer kippt alle vier Angriffe,
-die auf blindem Schreiber-Vertrauen beruhten. Die verbleibenden zwei (2, 3)
-sind **keine** Vertrauens-, sondern **Matching-Probleme** (exakter String-
-Vergleich statt Fuzzy/semantisch) — ehrlich offen als eigenes Ticket.
+**Bilanz: 1/7 → 7/7 abgewehrt.** Zwei Schichten greifen ineinander: der
+**Trust-Layer** kippt die vier Poisoning-Angriffe aus blindem Schreiber-
+Vertrauen (4–7); robusteres **Matching** fängt die zwei Umgehungen —
+Signaturen werden normalisiert verglichen (2), und Governance-Karten können
+`forbidden_action_patterns` (Regex) statt nur exakter Namen tragen (3).
 
-> Kernidee: Vertrauen ist jetzt ein First-Class-Feld — Provenienz je Memory
-> Card, Autorisierung auf globale DNA & Regeln, trust-gewichtete
-> Widerspruchsauflösung, und ein Gatekeeper, der untrusted Alternativen
-> zurückhält. Der Kernel schützt nun auch vor **Absicht**, nicht nur
-> vor **Versehen** — solange die `TrustPolicy` konfiguriert ist.
+> **Ehrlicher Vorbehalt:** Muster fangen die *anticipierte Rename-Familie*
+> (`delete|drop|purge … prod`), nicht jedes neue Synonym
+> (`eliminate_prod_records` bräuchte einen weiteren Term). Vollständig löst
+> das erst semantisches/embedding-basiertes Action-Matching — das nächste Ticket.
+
+> Kernidee: Vertrauen **und** Bedeutung sind jetzt First-Class — Provenienz je
+> Memory Card, Autorisierung auf globale DNA & Regeln, trust-gewichtete
+> Widerspruchsauflösung, ein Gatekeeper der untrusted Alternativen zurückhält,
+> normalisierte Signaturen und musterbasierte Governance.

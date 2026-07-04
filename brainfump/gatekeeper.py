@@ -9,6 +9,7 @@ bevor er handelt.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from enum import IntEnum
@@ -16,6 +17,17 @@ from typing import Any
 
 from brainfump.memory_cards import MemoryCardStore
 from brainfump.rules import RuntimeChecker
+
+_WS = re.compile(r"\s+")
+
+
+def _norm_signature(sig: str | None) -> str | None:
+    """Kanonische Form einer Fehler-/Fix-Signatur: getrimmt, kleingeschrieben,
+    Whitespace kollabiert. Fängt triviale Mutationen (angehängtes Leerzeichen,
+    Groß-/Kleinschreibung) ab, ohne semantisch verschiedene Fixes zu verwechseln."""
+    if not sig:
+        return sig
+    return _WS.sub(" ", sig.strip().lower())
 
 
 class GateMode(IntEnum):
@@ -116,13 +128,15 @@ class MemoryGatekeeper:
         cards = self.store.active(case_id=case_id, on_date=date.today().isoformat())
 
         # Gate 1: no_repeat_failed_fix — bereits gescheiterte Fixes blockieren.
-        signature = action.get("error_signature") or action.get("fix_signature")
+        signature = _norm_signature(
+            action.get("error_signature") or action.get("fix_signature")
+        )
         if signature:
             for card in cards:
                 if card.memory_type != "failure":
                     continue
-                card_sig = card.payload.get("error_signature") or card.payload.get(
-                    "fix_signature"
+                card_sig = _norm_signature(
+                    card.payload.get("error_signature") or card.payload.get("fix_signature")
                 )
                 if card_sig == signature:
                     consulted.append(card.card_id)
@@ -180,6 +194,10 @@ class MemoryGatekeeper:
                     mode = max(mode, GateMode.REQUIRE_REVIEW)
 
         # Gate 3: governance — explizit verbotene Aktionen blockieren.
+        # Neben exakten action_type-Namen können Governance-Karten
+        # forbidden_action_patterns (Regex) tragen, um semantisch gleiche,
+        # umbenannte Aktionen (drop_prod_tables ~ delete_production_data) zu
+        # erfassen — gegen Rename-Umgehungen.
         action_type = action.get("action_type")
         for card in cards:
             if card.memory_type != "governance":
@@ -187,7 +205,12 @@ class MemoryGatekeeper:
             forbidden = card.payload.get("forbidden_actions", ())
             if card.payload.get("forbidden_action"):
                 forbidden = (*forbidden, card.payload["forbidden_action"])
-            if action_type in forbidden:
+            patterns = card.payload.get("forbidden_action_patterns", ())
+            matched = action_type in forbidden or (
+                action_type is not None
+                and any(re.search(p, action_type) for p in patterns)
+            )
+            if matched:
                 consulted.append(card.card_id)
                 findings.append(
                     GateFinding(

@@ -37,6 +37,7 @@ def test_red_team_runs_and_case_isolation_holds():
     r = _run("red_team.py")
     assert r.returncode == 0, r.stderr
     assert "RED TEAM" in r.stdout
-    # Regressionsschutz: der Trust-Layer muss die Poisoning-Angriffe halten.
+    # Regressionsschutz: Trust-Layer + robustes Matching müssen alle 7 halten.
     assert "ABGEWEHRT" in r.stdout
-    assert "abgewehrt:     5/7" in r.stdout
+    assert "abgewehrt:     7/7" in r.stdout
+    assert "durchgekommen: 0/7" in r.stdout
