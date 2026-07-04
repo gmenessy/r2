@@ -15,6 +15,7 @@ from datetime import date
 from enum import IntEnum
 from typing import Any
 
+from brainfump.matching import IntentMatcher
 from brainfump.memory_cards import MemoryCardStore
 from brainfump.rules import RuntimeChecker
 
@@ -107,9 +108,13 @@ class MemoryGatekeeper:
         store: MemoryCardStore,
         checker: RuntimeChecker | None = None,
         min_alternative_trust: float = 0.0,
+        action_matcher: IntentMatcher | None = None,
     ) -> None:
         self.store = store
         self.checker = checker or RuntimeChecker()
+        # Semantisches Action-Intent-Matching (Ontologie-Default; ein echtes
+        # Embedding-Modell kann dieselbe matches()-Rolle übernehmen).
+        self.action_matcher = action_matcher or IntentMatcher()
         # Fix-Alternativen aus Failure-Karten unterhalb dieses Vertrauens werden
         # NICHT vorgeschlagen (sonst könnte eine untrusted Quelle Schadcode als
         # 'Alternative' unterschieben). 0.0 = alles vorschlagen (Default).
@@ -206,9 +211,11 @@ class MemoryGatekeeper:
             if card.payload.get("forbidden_action"):
                 forbidden = (*forbidden, card.payload["forbidden_action"])
             patterns = card.payload.get("forbidden_action_patterns", ())
-            matched = action_type in forbidden or (
-                action_type is not None
-                and any(re.search(p, action_type) for p in patterns)
+            intents = card.payload.get("forbidden_intents", ())
+            matched = (
+                action_type in forbidden
+                or (action_type is not None and any(re.search(p, action_type) for p in patterns))
+                or any(self.action_matcher.matches(action_type, it) for it in intents)
             )
             if matched:
                 consulted.append(card.card_id)

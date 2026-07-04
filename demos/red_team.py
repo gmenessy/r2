@@ -66,18 +66,18 @@ def attack_signature_mutation(kernel: BrainFumpKernel) -> None:
 
 def attack_governance_rename(kernel: BrainFumpKernel) -> None:
     step("Angriff 3", "Governance-Verbot durch Umbenennen der Aktion umgehen")
-    # Governance mit Muster statt nur exaktem Namen: fängt umbenannte Varianten.
+    # Governance drückt ABSICHT aus (verb=destroy, resource=prod) statt Namen —
+    # die Synonymklasse lebt zentral in der Intent-Ontologie.
     kernel.cards.add(MemoryCard(memory_type="governance", case_id=None,
                                 statement="Keine destruktiven Aktionen auf Produktionsdaten.",
-                                payload={"forbidden_actions": ["delete_production_data"],
-                                         "forbidden_action_patterns":
-                                             [r"(delete|drop|purge|truncate|wipe).*(prod|production)"]}))
+                                payload={"forbidden_intents": [{"verb": "destroy", "resource": "prod"}]}))
     named = kernel.check_action({"action_type": "delete_production_data", "case_id": "akte_opfer"})
     print(f"   {dim('unter verbotenem Namen →')} {named.mode.label}")
-    renamed = kernel.check_action({"action_type": "drop_prod_tables", "case_id": "akte_opfer"})
-    verdict(renamed.mode.label != "allow",
-            f"umbenannte Aktion 'drop_prod_tables' → {renamed.mode.label}. Ein "
-            "Governance-Muster (destroy-verb + prod) fängt die Rename-Familie.")
+    # 'eliminate' stand in KEINER Regex — die Intent-Ontologie kennt es als destroy-Synonym.
+    novel = kernel.check_action({"action_type": "eliminate_prod_records", "case_id": "akte_opfer"})
+    verdict(novel.mode.label != "allow",
+            f"neues Synonym 'eliminate_prod_records' → {novel.mode.label}. Intent-Matching "
+            "(verb=destroy ⊇ {delete,drop,…,eliminate}, resource=prod) fängt die ganze Familie.")
 
 
 def attack_global_poisoning(kernel: BrainFumpKernel) -> None:
@@ -159,12 +159,13 @@ def main() -> None:
     print("   vier Poisoning-Angriffe aus blindem Schreiber-Vertrauen (4, 5, 6, 7); das")
     print(f"   {green('robustere Matching')} fängt die zwei Umgehungen: Signatur-Normalisierung (2)")
     print("   und ein Governance-Muster (destroy-verb + prod) statt exaktem Namen (3).")
-    print(f"\n   {yellow('Ehrlicher Vorbehalt:')} Muster fangen die anticipierte " + bold("Rename-Familie") + ", nicht")
-    print("   jedes neue Synonym ('eliminate_prod_records' bräuchte einen weiteren Term).")
-    print("   Vollständig löst das erst semantisches/embedding-basiertes Action-Matching.")
+    print(f"\n   {yellow('Ehrlicher Vorbehalt:')} Das Intent-Matching ist eine geteilte " + bold("Ontologie"))
+    print("   (Verb-/Ressourcen-Synonyme an EINER Stelle), kein neuronales Modell — ein Verb")
+    print("   außerhalb der Klassen (z. B. 'vaporize') bräuchte einen Eintrag. Die Schnittstelle")
+    print("   ist aber so geschnitten, dass ein echtes Embedding-Modell dieselbe Rolle übernimmt.")
     print(f"\n   {cyan('One More Thing:')} Vertrauen UND Bedeutung sind jetzt First-Class — Provenienz je")
     print("   Card, Autorisierung auf globale DNA & Regeln, trust-gewichtete Widerspruchs-")
-    print("   auflösung, normalisierte Signaturen und musterbasierte Governance.\n")
+    print("   auflösung, normalisierte Signaturen und intent-basierte (ontologische) Governance.\n")
 
 
 if __name__ == "__main__":

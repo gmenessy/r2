@@ -39,7 +39,7 @@ inzwischen ist er implementiert und hier aktiv (`angreifer`-Trust = 0.1):
 |---|---------|-----------|------------------|
 | 1 | Cross-Case-Leak | 🛡 | 🛡 Case-Isolation |
 | 2 | Failure-Gate via Signatur-Mutation | ☠ | 🛡 Signatur-Normalisierung |
-| 3 | Governance-Bypass via Umbenennung | ☠ | 🛡 Governance-Muster |
+| 3 | Governance-Bypass via Umbenennung | ☠ | 🛡 Intent-Ontologie |
 | 4 | systemweite Sperre via globale DNA | ☠ | 🛡 Autorisierung ≥0.9 |
 | 5 | Wahres Wissen per Widerspruch löschen | ☠ | 🛡 trust-gewichtet |
 | 6 | bösartige „Alternative" unterschieben | ☠ | 🛡 zurückgehalten <0.7 |
@@ -48,15 +48,17 @@ inzwischen ist er implementiert und hier aktiv (`angreifer`-Trust = 0.1):
 **Bilanz: 1/7 → 7/7 abgewehrt.** Zwei Schichten greifen ineinander: der
 **Trust-Layer** kippt die vier Poisoning-Angriffe aus blindem Schreiber-
 Vertrauen (4–7); robusteres **Matching** fängt die zwei Umgehungen —
-Signaturen werden normalisiert verglichen (2), und Governance-Karten können
-`forbidden_action_patterns` (Regex) statt nur exakter Namen tragen (3).
+Signaturen werden normalisiert verglichen (2), und Governance-Karten drücken
+*Absicht* aus (`forbidden_intents: [{"verb":"destroy","resource":"prod"}]`),
+sodass sogar das neue Synonym `eliminate_prod_records` blockiert wird (3).
 
-> **Ehrlicher Vorbehalt:** Muster fangen die *anticipierte Rename-Familie*
-> (`delete|drop|purge … prod`), nicht jedes neue Synonym
-> (`eliminate_prod_records` bräuchte einen weiteren Term). Vollständig löst
-> das erst semantisches/embedding-basiertes Action-Matching — das nächste Ticket.
+> **Ehrlicher Vorbehalt:** Das Intent-Matching ist eine geteilte **Ontologie**
+> (Verb-/Ressourcen-Synonymklassen an *einer* Stelle statt Regex je Karte),
+> kein neuronales Modell — ein Verb außerhalb der Klassen (`vaporize`) braucht
+> einen Eintrag. Die `IntentMatcher.matches()`-Schnittstelle ist aber so
+> geschnitten, dass ein echtes Embedding-Modell dieselbe Rolle übernimmt.
 
 > Kernidee: Vertrauen **und** Bedeutung sind jetzt First-Class — Provenienz je
 > Memory Card, Autorisierung auf globale DNA & Regeln, trust-gewichtete
 > Widerspruchsauflösung, ein Gatekeeper der untrusted Alternativen zurückhält,
-> normalisierte Signaturen und musterbasierte Governance.
+> normalisierte Signaturen und intent-basierte (ontologische) Governance.
