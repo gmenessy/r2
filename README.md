@@ -106,7 +106,24 @@ kernel = BrainFumpKernel(trust=policy)
 ```
 
 Siehe [`demos/red_team.py`](demos/red_team.py) — dieselben sieben Poisoning-Angriffe,
-mit Trust-Layer von 1/7 auf 5/7 abgewehrt.
+mit Trust-Layer + robustem Matching von 1/7 auf **7/7** abgewehrt.
+
+### Governance-Intent-Matching
+
+Governance-Karten können statt exakter action-Namen eine **Absicht** verbieten.
+Der Gatekeeper matcht über einen austauschbaren `ActionMatcher`:
+
+- `IntentMatcher` (Default) — geteilte Verb-/Ressourcen-Ontologie, abhängigkeitsfrei;
+  fängt `eliminate_prod_records` über die `destroy`-Synonymklasse.
+- `EmbeddingIntentMatcher(embed)` — derselbe Vertrag über ein echtes
+  Embedding-Modell (Cosinus gegen Referenz-Beispiele). Mit dem lexikalischen
+  `HashingEmbedder` erkennt es keine Synonyme — dafür ist die Ontologie da.
+
+```python
+from brainfump import MemoryGatekeeper, EmbeddingIntentMatcher
+gate = MemoryGatekeeper(store, action_matcher=EmbeddingIntentMatcher(embed=my_model))
+# Governance-Karte: payload={"forbidden_intents": [{"verb": "destroy", "resource": "prod"}]}
+```
 
 ## Demos
 

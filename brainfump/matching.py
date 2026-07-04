@@ -15,10 +15,23 @@ die Governance-Semantik im Gatekeeper bleibt unverändert.
 
 from __future__ import annotations
 
+import math
 import re
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, Protocol, Sequence, runtime_checkable
 
 _TOKEN = re.compile(r"[a-z0-9]+")
+
+
+@runtime_checkable
+class ActionMatcher(Protocol):
+    """Ordnet einen ``action_type`` einer verbotenen Absicht zu.
+
+    Sowohl der ontologische ``IntentMatcher`` als auch der modellbasierte
+    ``EmbeddingIntentMatcher`` erfüllen diese Rolle — der Gatekeeper ist
+    gegen die Schnittstelle programmiert, nicht gegen eine Implementierung.
+    """
+
+    def matches(self, action_type: str | None, intent: Mapping[str, Any]) -> bool: ...
 
 # Default-Ontologie. Bewusst konservativ und erweiterbar — kein neuronales
 # Modell, aber die Synonymklasse lebt an EINER Stelle statt in N Regex.
@@ -80,3 +93,54 @@ class IntentMatcher:
 
         # Eine leere Absicht darf nicht alles matchen.
         return verb is not None or resource is not None
+
+
+def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return dot / norm if norm else 0.0
+
+
+class EmbeddingIntentMatcher:
+    """Modellbasiertes Intent-Matching über einen injizierten Embedding-Provider.
+
+    Erfüllt dieselbe ``matches``-Rolle wie ``IntentMatcher``, entscheidet aber
+    per Cosinus-Ähnlichkeit statt Ontologie. Eine Absicht liefert Referenz-
+    Beispiele: entweder explizit ``{"like": ["delete production data", …]}``
+    oder implizit aus ``{"verb": "destroy", "resource": "prod"}`` (→ "destroy prod").
+
+    WICHTIG (Ehrlichkeit): Die Qualität hängt VOLLSTÄNDIG vom Embedder ab. Ein
+    echtes Sprachmodell erkennt ``eliminate`` ~ ``delete``; der abhängigkeitsfreie
+    ``HashingEmbedder`` ist rein lexikalisch und tut das NICHT — für ihn bleibt
+    die Ontologie (``IntentMatcher``) die bessere Wahl.
+    """
+
+    def __init__(self, embed: Callable[[str], Sequence[float]], threshold: float = 0.6) -> None:
+        self._embed = embed
+        self.threshold = threshold
+        self._cache: dict[str, Sequence[float]] = {}
+
+    def _emb(self, text: str) -> Sequence[float]:
+        vec = self._cache.get(text)
+        if vec is None:
+            vec = self._embed(text)
+            self._cache[text] = vec
+        return vec
+
+    @staticmethod
+    def _exemplars(intent: Mapping[str, Any]) -> list[str]:
+        like = list(intent.get("like", ()))
+        if like:
+            return like
+        phrase = " ".join(str(intent[k]) for k in ("verb", "resource") if intent.get(k))
+        return [phrase] if phrase else []
+
+    def matches(self, action_type: str | None, intent: Mapping[str, Any]) -> bool:
+        if not action_type:
+            return False
+        exemplars = self._exemplars(intent)
+        if not exemplars:
+            return False
+        query = " ".join(_TOKEN.findall(action_type.lower()))
+        qv = self._emb(query)
+        return any(_cosine(qv, self._emb(ex)) >= self.threshold for ex in exemplars)

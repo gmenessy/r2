@@ -14,7 +14,7 @@ from brainfump.events import Event, EventLog, EVENT_TYPES
 from brainfump.memory_cards import MemoryCard, MemoryCardStore, MEMORY_TYPES
 from brainfump.extractor import MemoryExtractor
 from brainfump.evolution import EvolutionMemory, EvolutionPatch, PATCH_TYPES
-from brainfump.matching import IntentMatcher
+from brainfump.matching import ActionMatcher, EmbeddingIntentMatcher, IntentMatcher
 from brainfump.rules import Rule, RuleCompiler, RuntimeChecker, Violation
 from brainfump.trust import TrustPolicy
 from brainfump.gatekeeper import GateDecision, GateFinding, GateMode, MemoryGatekeeper
@@ -45,6 +45,8 @@ __all__ = [
     "GateDecision",
     "GateFinding",
     "GateMode",
+    "ActionMatcher",
+    "EmbeddingIntentMatcher",
     "GoldenScenario",
     "HashingEmbedder",
     "IntentMatcher",
