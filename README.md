@@ -72,9 +72,10 @@ curl -X POST http://127.0.0.1:8080/api/gatekeeper/check \
 | `brainfump/rules.py` | Korrekturen → ausführbare Regeln (TRACE) + Runtime Checks |
 | `brainfump/gatekeeper.py` | Pre-Action Gate: allow / warn / require_review / suggest_alternative / block |
 | `brainfump/retrieval.py` | fRAG-Ranking: semantic + case + recency + confidence + trust + risk + governance; austauschbare `Similarity` (lexikalisch oder Embedding) |
-| `brainfump/consolidation.py` | Offline: Dedupe, Widersprüche, Archivierung |
+| `brainfump/consolidation.py` | Offline: Dedupe, trust-gewichtete Widersprüche, Archivierung |
+| `brainfump/trust.py` | Trust & Provenance: `TrustPolicy` — Vertrauen je Quelle, Autorisierung auf globale DNA/Regeln |
 | `brainfump/evaluation.py` | Memory-Metriken + Golden-Scenario-Harness |
-| `brainfump/kernel.py` | Fassade, verdrahtet die Pipeline (`BrainFumpKernel(similarity=…)`) |
+| `brainfump/kernel.py` | Fassade, verdrahtet die Pipeline (`BrainFumpKernel(similarity=…, trust=…)`) |
 | `brainfump/webkit.py` | Gemeinsamer Web-Baukasten: Routing, Validierung, `/api/health` |
 | `brainfump/api.py` | `/api/gatekeeper/check` und `/api/memory/search` (Stdlib-HTTP) |
 
@@ -88,6 +89,30 @@ from brainfump import BrainFumpKernel, EmbeddingSimilarity
 
 kernel = BrainFumpKernel(similarity=EmbeddingSimilarity(embed=my_embedding_fn))
 ```
+
+### Trust & Provenance
+
+Ohne `TrustPolicy` ist der Kernel permissiv (jede Quelle voll vertrauenswürdig
+— unverändertes Verhalten). Mit einer Policy wird Vertrauen ein First-Class-Feld:
+Quellen unterhalb der Schwelle dürfen keine globale DNA setzen, ihre Korrekturen
+werden nicht zu erzwungenen Regeln, ihre Widersprüche löschen kein höher
+vertrautes Wissen, und der Gatekeeper hält ihre Fix-Alternativen zurück.
+
+```python
+from brainfump import BrainFumpKernel, TrustPolicy
+
+policy = TrustPolicy(default=0.5).grant("ops", 1.0).grant("externer_bot", 0.1)
+kernel = BrainFumpKernel(trust=policy)
+```
+
+Siehe [`demos/red_team.py`](demos/red_team.py) — dieselben sieben Poisoning-Angriffe,
+mit Trust-Layer von 1/7 auf 5/7 abgewehrt.
+
+## Demos
+
+Drei ausführbare Grenz-Szenarien in [`demos/`](demos/): `chronos.py`
+(Zeitreise/Evolution), `tribunal.py` (Widerspruchsauflösung), `red_team.py`
+(Adversarial Poisoning). Siehe [demos/README.md](demos/README.md).
 
 ## Anwendungen (apps/)
 

@@ -24,7 +24,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from brainfump import BrainFumpKernel  # noqa: E402
+from brainfump import BrainFumpKernel, TrustPolicy  # noqa: E402
 from brainfump.memory_cards import MemoryCard  # noqa: E402
 from demos._console import bold, cyan, dim, green, red, step, title, yellow  # noqa: E402
 
@@ -85,8 +85,8 @@ def attack_global_poisoning(kernel: BrainFumpKernel) -> None:
                   payload={"forbidden_actions": ["write_file"]})
     victim = kernel.check_action({"action_type": "write_file", "case_id": "voellig_anderes_projekt"})
     verdict(victim.mode.label == "allow",
-            f"ein einziger record(case_id=None) blockiert 'write_file' in JEDEM Projekt "
-            f"→ {victim.mode.label}. Keine Provenienz-/Rechteprüfung auf globale DNA.")
+            f"'write_file' in fremdem Projekt → {victim.mode.label}. Globale DNA von "
+            f"'angreifer' (trust 0.1 < 0.9) wird nicht zur aktiven systemweiten Regel.")
 
 
 def attack_truth_suppression(kernel: BrainFumpKernel) -> None:
@@ -98,9 +98,10 @@ def attack_truth_suppression(kernel: BrainFumpKernel) -> None:
     kernel.consolidate(case_id="akte_opfer")
     remaining = [c for c in kernel.cards.active(case_id="akte_opfer", include_global=False)
                  if "secret" in c.scope]
+    survivor_trust = f"{remaining[0].trust:.1f}" if remaining else "—"
     verdict(len(remaining) > 0,
-            f"nach der Konsolidierung sind {red(str(len(remaining)))} Secret-Fakten aktiv — "
-            "ein einziger Negations-Widerspruch löscht die WAHRE Aussage gleich mit.")
+            f"{green(str(len(remaining)))} Secret-Fakt(en) aktiv (Überlebender trust={survivor_trust}) — "
+            "die vertrauenswürdigere ops-Aussage (1.0) überlebt den Widerspruch der Quelle (0.1).")
 
 
 def attack_alternative_hijack(kernel: BrainFumpKernel) -> None:
@@ -113,8 +114,8 @@ def attack_alternative_hijack(kernel: BrainFumpKernel) -> None:
                              "error_signature": "deploy_fail"})
     hijacked = "evil.sh" in (d.suggested_alternative or "")
     verdict(not hijacked,
-            f"das Gate reicht die hinterlegte Alternative ungeprüft weiter → "
-            f"{yellow(repr(d.suggested_alternative))}. Der 'Schutz' schlägt aktiv Schadcode vor.")
+            f"vorgeschlagene Alternative: {yellow(repr(d.suggested_alternative))}. Quelle "
+            "'angreifer' (0.1 < 0.7) → die Alternative wird zurückgehalten statt vorgeschlagen.")
 
 
 def attack_rule_injection(kernel: BrainFumpKernel) -> None:
@@ -126,14 +127,20 @@ def attack_rule_injection(kernel: BrainFumpKernel) -> None:
                              "context": {"case_id": "akte_opfer",
                                          "package_json": {"dependencies": {"react": "^18"}}}})
     verdict(d.mode.label == "allow",
-            f"jede Korrektur wird ungeprüft zur erzwungenen Runtime-Regel → ein legitimer "
-            f"React-Build wird jetzt mit '{d.mode.label}' sabotiert (Denial-of-Service via Memory).")
+            f"React-Build → {d.mode.label}. Die Korrektur der Quelle 'angreifer' (0.1 < 0.7) "
+            "wird nicht zur erzwungenen Regel — kein Denial-of-Service via Memory.")
 
 
 def main() -> None:
-    kernel = BrainFumpKernel()
-    title("RED TEAM · Adversarial Memory Poisoning")
-    print(dim("  Angreifer und Opfer teilen sich denselben Kernel. Los.\n"))
+    # Trust-Layer aktiv: unbekannte Quellen mittelmäßig (0.5), 'ops' voll
+    # vertrauenswürdig, 'angreifer' nahe null. Globale DNA braucht ≥0.9,
+    # erzwungene Regeln & vorgeschlagene Alternativen ≥0.7.
+    policy = TrustPolicy(default=0.5).grant("ops", 1.0).grant("angreifer", 0.1)
+    kernel = BrainFumpKernel(trust=policy)
+
+    title("RED TEAM · Adversarial Memory Poisoning  (mit Trust-Layer)")
+    print(dim("  Angreifer und Opfer teilen sich denselben Kernel — aber jetzt mit"))
+    print(dim("  Provenienz-Vertrauen je Quelle. 'angreifer'-Trust = 0.1. Los.\n"))
     for attack in (
         attack_cross_case, attack_signature_mutation, attack_governance_rename,
         attack_global_poisoning, attack_truth_suppression,
@@ -145,13 +152,14 @@ def main() -> None:
     total = _SCORE["blocked"] + _SCORE["leaked"]
     print(f"   {green('🛡 abgewehrt:')}     {_SCORE['blocked']}/{total}")
     print(f"   {red('☠ durchgekommen:')} {_SCORE['leaked']}/{total}")
-    print(f"\n   {bold('Befund:')} Die einzige harte Grenze, die hält, ist die {green('Case-Isolation')}.")
-    print("   Alle anderen Angriffe nutzen dieselbe Wurzel: der Kernel " + bold("vertraut jedem Schreiber"))
-    print("   bedingungslos — kein Provenienz-Trust, keine Autorisierung auf globale DNA,")
-    print("   kein Fuzzy-Matching, keine Prüfung eingeschleuster Alternativen/Regeln.")
-    print(f"\n   {cyan('One More Thing:')} Der nächste echte Meilenstein ist keine Feature-Erweiterung,")
-    print("   sondern ein " + bold("Trust-Layer") + " — signierte/berechtigte Schreiber, Provenienz je")
-    print("   Memory Card, und ein Gatekeeper, der Herkunft und Vertrauen mit-bewertet.\n")
+    print(f"\n   {bold('Befund:')} Der {green('Trust-Layer')} kippt die vier Poisoning-Angriffe, die auf")
+    print("   blindem Schreiber-Vertrauen beruhten: globale DNA (4), Truth-Suppression (5),")
+    print("   Alternative-Hijack (6) und Rule-Injection (7) prallen jetzt an der Provenienz ab.")
+    print(f"\n   {yellow('Verbleibende Grenzen (2/7):')} Signatur-Mutation (2) und Governance-Rename (3)")
+    print("   sind KEINE Vertrauens-, sondern " + bold("Matching-Probleme") + " — exakter String-Vergleich")
+    print("   statt Fuzzy/semantischem Abgleich. Ehrlich offen, eigenes nächstes Ticket.")
+    print(f"\n   {cyan('One More Thing:')} Vertrauen ist jetzt ein First-Class-Feld (Provenienz je Card,")
+    print("   Autorisierung auf globale DNA & Regeln, trust-gewichtete Widerspruchsauflösung).\n")
 
 
 if __name__ == "__main__":

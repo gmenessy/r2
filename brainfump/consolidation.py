@@ -83,8 +83,17 @@ class Consolidator:
                     continue
                 if self._contradicts(a.statement, b.statement):
                     report.contradictions.append((a.card_id, b.card_id))
-                    self.store.set_status(a.card_id, "contradicted")
-                    self.store.set_status(b.card_id, "contradicted")
+                    # Trust-gewichtet: die vertrauenswürdigere Aussage überlebt.
+                    # Nur bei Gleichstand werden beide stillgelegt — so kann
+                    # eine untrusted Quelle wahres Wissen nicht per Widerspruch
+                    # löschen (Truth-Suppression).
+                    if a.trust > b.trust:
+                        self.store.set_status(b.card_id, "contradicted")
+                    elif b.trust > a.trust:
+                        self.store.set_status(a.card_id, "contradicted")
+                    else:
+                        self.store.set_status(a.card_id, "contradicted")
+                        self.store.set_status(b.card_id, "contradicted")
 
     @staticmethod
     def _contradicts(stmt_a: str, stmt_b: str) -> bool:

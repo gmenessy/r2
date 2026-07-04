@@ -15,6 +15,7 @@ from brainfump.memory_cards import MemoryCard, MemoryCardStore, MEMORY_TYPES
 from brainfump.extractor import MemoryExtractor
 from brainfump.evolution import EvolutionMemory, EvolutionPatch, PATCH_TYPES
 from brainfump.rules import Rule, RuleCompiler, RuntimeChecker, Violation
+from brainfump.trust import TrustPolicy
 from brainfump.gatekeeper import GateDecision, GateFinding, GateMode, MemoryGatekeeper
 from brainfump.embeddings import HashingEmbedder, SqliteVectorCache
 from brainfump.retrieval import (
@@ -58,6 +59,7 @@ __all__ = [
     "RuntimeChecker",
     "Similarity",
     "SqliteVectorCache",
+    "TrustPolicy",
     "Violation",
     "Weights",
 ]

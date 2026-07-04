@@ -37,6 +37,6 @@ def test_red_team_runs_and_case_isolation_holds():
     r = _run("red_team.py")
     assert r.returncode == 0, r.stderr
     assert "RED TEAM" in r.stdout
-    # Regressionsschutz: Angriff 1 (Cross-Case-Leak) MUSS abgewehrt bleiben.
+    # Regressionsschutz: der Trust-Layer muss die Poisoning-Angriffe halten.
     assert "ABGEWEHRT" in r.stdout
-    assert "abgewehrt:     1/7" in r.stdout
+    assert "abgewehrt:     5/7" in r.stdout

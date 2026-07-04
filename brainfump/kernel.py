@@ -22,6 +22,7 @@ from brainfump.gatekeeper import GateDecision, MemoryGatekeeper
 from brainfump.memory_cards import MemoryCard, MemoryCardStore
 from brainfump.retrieval import Retriever, ScoredCard, Similarity
 from brainfump.rules import RuleCompiler, RuntimeChecker
+from brainfump.trust import TrustPolicy
 
 
 class BrainFumpKernel:
@@ -32,7 +33,12 @@ class BrainFumpKernel:
     (entspricht vfs://events/ und vfs://memory/).
     """
 
-    def __init__(self, base_path: str | None = None, similarity: "Similarity | None" = None) -> None:
+    def __init__(
+        self,
+        base_path: str | None = None,
+        similarity: "Similarity | None" = None,
+        trust: "TrustPolicy | None" = None,
+    ) -> None:
         if base_path is None:
             event_path = card_path = patch_path = ":memory:"
         else:
@@ -41,19 +47,24 @@ class BrainFumpKernel:
             card_path = os.path.join(base_path, "cards.db")
             patch_path = os.path.join(base_path, "patches.db")
 
+        self.trust = trust or TrustPolicy()
         self.events = EventLog(event_path)
         self.cards = MemoryCardStore(card_path)
         self.extractor = MemoryExtractor(self.cards)
         self.evolution = EvolutionMemory(self.cards, patch_path)
         self.compiler = RuleCompiler()
         self.checker = RuntimeChecker()
-        self.gatekeeper = MemoryGatekeeper(self.cards, self.checker)
+        self.gatekeeper = MemoryGatekeeper(
+            self.cards, self.checker, min_alternative_trust=self.trust.alternative_min
+        )
         self.retriever = Retriever(self.cards, similarity=similarity)
         self.consolidator = Consolidator(self.cards)
 
-        # Regeln leben im RAM — nach einem Neustart werden sie aus den
-        # persistierten correction-Events deterministisch rekompiliert.
+        # Regeln leben im RAM — nach einem Neustart aus den persistierten
+        # correction-Events rekompiliert, aber nur von berechtigten Quellen.
         for event in self.events.query(event_type="correction"):
+            if not self.trust.may_enforce_rules(event.source):
+                continue
             rule = self.compiler.compile_correction(event)
             if rule is not None:
                 self.checker.add_rule(rule)
@@ -61,13 +72,29 @@ class BrainFumpKernel:
     # -- Schreiben -----------------------------------------------------------
 
     def record(self, event_type: str, content: str, **kwargs: Any) -> Event:
-        """Event beweissicher loggen, Memory Card extrahieren und
-        Korrekturen sofort in Runtime-Regeln kompilieren."""
+        """Event beweissicher loggen (immer — Provenienz/Audit), dann
+        trust-gefiltert zu Memory Cards und Runtime-Regeln verdichten."""
         event = self.events.record(event_type, content, **kwargs)
-        self.extractor.extract(event)
-        rule = self.compiler.compile_correction(event)
-        if rule is not None:
-            self.checker.add_rule(rule)
+        source_trust = self.trust.trust_of(event.source)
+
+        # Globale DNA (case_id=None, policy_violation→governance) nur von
+        # berechtigten Quellen. Untrusted: Event bleibt als Beweis, aber es
+        # entsteht KEINE aktive systemweite Governance-Karte.
+        if (
+            event.case_id is None
+            and event_type == "policy_violation"
+            and not self.trust.may_write_global_dna(event.source)
+        ):
+            return event
+
+        self.extractor.extract(event, trust=source_trust)
+
+        # Korrekturen werden nur von berechtigten Quellen zu erzwungenen Regeln
+        # (sonst bleiben sie eine reine Notiz/Memory Card, kein Qualitäts-Gate).
+        if event_type == "correction" and self.trust.may_enforce_rules(event.source):
+            rule = self.compiler.compile_correction(event)
+            if rule is not None:
+                self.checker.add_rule(rule)
         return event
 
     def patch(self, patch: EvolutionPatch) -> MemoryCard | None:

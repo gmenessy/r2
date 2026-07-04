@@ -31,24 +31,27 @@ still — die wahre Aussage verschwindet mit der falschen, ohne Eskalation.
 
 ## 3. Red Team — Adversarial Memory Poisoning  🚩 (die gewagte)
 Angreifer und Opfer teilen sich denselben Kernel. Sieben Angriffe, wirklich
-ausgeführt und am Ergebnis gemessen (🛡 abgewehrt / ☠ durchgekommen):
+ausgeführt und am Ergebnis gemessen (🛡 abgewehrt / ☠ durchgekommen). Diese
+Demo lief den **Trust-Layer** (`brainfump/trust.py`) erst als offene Lücke —
+inzwischen ist er implementiert und hier aktiv (`angreifer`-Trust = 0.1):
 
-| # | Angriff | Ergebnis |
-|---|---------|----------|
-| 1 | Cross-Case-Leak | 🛡 abgewehrt (Case-Isolation hält) |
-| 2 | Failure-Gate via Signatur-Mutation | ☠ exakter Match, kein Fuzzy |
-| 3 | Governance-Bypass via Umbenennung | ☠ action_type ist string-exakt |
-| 4 | systemweite Sperre via globale DNA | ☠ keine Autorisierung |
-| 5 | Wahres Wissen per Widerspruch löschen | ☠ Truth-Suppression |
-| 6 | bösartige „Alternative" unterschieben | ☠ ungeprüft weitergereicht |
-| 7 | Build-Sabotage via eingeschleuster Korrektur | ☠ Rule-Injection-DoS |
+| # | Angriff | ohne Trust | mit Trust-Layer |
+|---|---------|-----------|-----------------|
+| 1 | Cross-Case-Leak | 🛡 | 🛡 Case-Isolation |
+| 2 | Failure-Gate via Signatur-Mutation | ☠ | ☠ *Matching-Problem* |
+| 3 | Governance-Bypass via Umbenennung | ☠ | ☠ *Matching-Problem* |
+| 4 | systemweite Sperre via globale DNA | ☠ | 🛡 Autorisierung ≥0.9 |
+| 5 | Wahres Wissen per Widerspruch löschen | ☠ | 🛡 trust-gewichtet |
+| 6 | bösartige „Alternative" unterschieben | ☠ | 🛡 zurückgehalten <0.7 |
+| 7 | Build-Sabotage via Korrektur | ☠ | 🛡 nicht erzwungen <0.7 |
 
-**Bilanz: 1/7 abgewehrt.** Die einzige harte Grenze, die hält, ist die
-Case-Isolation. Alle anderen Angriffe teilen dieselbe Wurzel:
+**Bilanz: 1/7 → 5/7 abgewehrt.** Der Trust-Layer kippt alle vier Angriffe,
+die auf blindem Schreiber-Vertrauen beruhten. Die verbleibenden zwei (2, 3)
+sind **keine** Vertrauens-, sondern **Matching-Probleme** (exakter String-
+Vergleich statt Fuzzy/semantisch) — ehrlich offen als eigenes Ticket.
 
-> Der Kernel schützt vor **Versehen**, nicht vor **Absicht** — er hat
-> Guardrails, aber keinen **Trust-Layer** (Provenienz je Card, Autorisierung
-> auf globale DNA, Vertrauensgewichtung im Gatekeeper).
-
-Das ist die stärkste Roadmap-Erkenntnis dieser Demos: der nächste echte
-Meilenstein ist kein Feature, sondern **Trust & Provenance**.
+> Kernidee: Vertrauen ist jetzt ein First-Class-Feld — Provenienz je Memory
+> Card, Autorisierung auf globale DNA & Regeln, trust-gewichtete
+> Widerspruchsauflösung, und ein Gatekeeper, der untrusted Alternativen
+> zurückhält. Der Kernel schützt nun auch vor **Absicht**, nicht nur
+> vor **Versehen** — solange die `TrustPolicy` konfiguriert ist.

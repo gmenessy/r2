@@ -90,9 +90,18 @@ class MemoryGatekeeper:
         }
     """
 
-    def __init__(self, store: MemoryCardStore, checker: RuntimeChecker | None = None) -> None:
+    def __init__(
+        self,
+        store: MemoryCardStore,
+        checker: RuntimeChecker | None = None,
+        min_alternative_trust: float = 0.0,
+    ) -> None:
         self.store = store
         self.checker = checker or RuntimeChecker()
+        # Fix-Alternativen aus Failure-Karten unterhalb dieses Vertrauens werden
+        # NICHT vorgeschlagen (sonst könnte eine untrusted Quelle Schadcode als
+        # 'Alternative' unterschieben). 0.0 = alles vorschlagen (Default).
+        self.min_alternative_trust = min_alternative_trust
 
     def check(self, action: dict[str, Any]) -> GateDecision:
         case_id = action.get("case_id")
@@ -128,10 +137,24 @@ class MemoryGatekeeper:
                             source=card.card_id,
                         )
                     )
-                    if card.payload.get("alternative"):
+                    if card.payload.get("alternative") and card.trust >= self.min_alternative_trust:
                         alternative = card.payload["alternative"]
                         mode = max(mode, GateMode.SUGGEST_ALTERNATIVE)
                     else:
+                        # Kein Vorschlag: entweder keine Alternative hinterlegt
+                        # oder die Quelle ist zu wenig vertrauenswürdig.
+                        if card.payload.get("alternative"):
+                            findings.append(
+                                GateFinding(
+                                    gate="untrusted_alternative",
+                                    severity="high",
+                                    message=(
+                                        "Eine hinterlegte Alternative wurde wegen "
+                                        "zu geringem Quellen-Vertrauen zurückgehalten."
+                                    ),
+                                    source=card.card_id,
+                                )
+                            )
                         mode = max(mode, GateMode.BLOCK)
 
         # Gate 2: fragile_file — riskante Dateien erfordern Review.

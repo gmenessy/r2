@@ -32,7 +32,7 @@ class MemoryExtractor:
     def __init__(self, store: MemoryCardStore) -> None:
         self.store = store
 
-    def extract(self, event: Event) -> MemoryCard | None:
+    def extract(self, event: Event, trust: float = 1.0) -> MemoryCard | None:
         memory_type = _EVENT_TO_MEMORY.get(event.event_type)
         if memory_type is None:
             if event.event_type in _EPISODIC_TYPES and event.payload.get("memorable"):
@@ -53,6 +53,7 @@ class MemoryExtractor:
             case_id=event.case_id,
             scope=scope,
             confidence=event.confidence,
+            trust=trust,  # Provenienz-Vertrauen der Quelle (event.source)
             evidence=(event.event_id,),
             payload=payload,
             valid_from=event.timestamp[:10],
