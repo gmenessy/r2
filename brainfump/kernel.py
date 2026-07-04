@@ -21,7 +21,7 @@ from brainfump.extractor import MemoryExtractor
 from brainfump.gatekeeper import GateDecision, MemoryGatekeeper
 from brainfump.memory_cards import MemoryCard, MemoryCardStore
 from brainfump.retrieval import Retriever, ScoredCard, Similarity
-from brainfump.rules import RuleCompiler, RuntimeChecker
+from brainfump.rules import RuleCompiler, RuleStore, RuntimeChecker
 from brainfump.trust import TrustPolicy
 
 
@@ -40,12 +40,13 @@ class BrainFumpKernel:
         trust: "TrustPolicy | None" = None,
     ) -> None:
         if base_path is None:
-            event_path = card_path = patch_path = ":memory:"
+            event_path = card_path = patch_path = rule_path = ":memory:"
         else:
             os.makedirs(base_path, exist_ok=True)
             event_path = os.path.join(base_path, "events.db")
             card_path = os.path.join(base_path, "cards.db")
             patch_path = os.path.join(base_path, "patches.db")
+            rule_path = os.path.join(base_path, "rules.db")
 
         self.trust = trust or TrustPolicy()
         self.events = EventLog(event_path)
@@ -54,20 +55,25 @@ class BrainFumpKernel:
         self.evolution = EvolutionMemory(self.cards, patch_path)
         self.compiler = RuleCompiler()
         self.checker = RuntimeChecker()
+        self.rule_store = RuleStore(rule_path)
         self.gatekeeper = MemoryGatekeeper(
             self.cards, self.checker, min_alternative_trust=self.trust.alternative_min
         )
         self.retriever = Retriever(self.cards, similarity=similarity)
         self.consolidator = Consolidator(self.cards)
 
-        # Regeln leben im RAM — nach einem Neustart aus den persistierten
-        # correction-Events rekompiliert, aber nur von berechtigten Quellen.
+        # E-1: Regeln kommen aus dem persistenten RuleStore, nicht aus
+        # wiederholter Ableitung. Einmaliger, idempotenter Backfill seedet den
+        # Store aus berechtigten correction-Events (revoked Regeln bleiben
+        # revoked, da add() INSERT OR IGNORE nutzt); danach lädt der Checker die
+        # aktiven Regeln.
         for event in self.events.query(event_type="correction"):
             if not self.trust.may_enforce_rules(event.source):
                 continue
             rule = self.compiler.compile_correction(event)
             if rule is not None:
-                self.checker.add_rule(rule)
+                self.rule_store.add(rule, source=event.source)
+        self._reload_rules()
 
     # -- Schreiben -----------------------------------------------------------
 
@@ -91,11 +97,26 @@ class BrainFumpKernel:
 
         # Korrekturen werden nur von berechtigten Quellen zu erzwungenen Regeln
         # (sonst bleiben sie eine reine Notiz/Memory Card, kein Qualitäts-Gate).
+        # Die Regel wird persistiert UND live in den Checker gehängt.
         if event_type == "correction" and self.trust.may_enforce_rules(event.source):
             rule = self.compiler.compile_correction(event)
-            if rule is not None:
+            if rule is not None and not self.rule_store.exists(rule.rule_id):
+                self.rule_store.add(rule, source=event.source)
                 self.checker.add_rule(rule)
         return event
+
+    def revoke_rule(self, rule_id: str) -> bool:
+        """Eine erzwungene Regel zurücknehmen (Status 'revoked'). Sie wird aus
+        der Live-Prüfung entfernt und beim nächsten Backfill nicht wiederbelebt.
+        Das append-only Event Log bleibt unangetastet."""
+        revoked = self.rule_store.revoke(rule_id)
+        if revoked:
+            self._reload_rules()
+        return revoked
+
+    def _reload_rules(self) -> None:
+        """Live-Checker aus den aktiven Regeln des Stores neu bestücken."""
+        self.checker.rules = list(self.rule_store.active())
 
     def patch(self, patch: EvolutionPatch) -> MemoryCard | None:
         return self.evolution.apply_patch(patch)

@@ -7,13 +7,19 @@ Compliance wird geschlossen, indem Regeln vor Task-Abschluss geprüft werden.
 
 from __future__ import annotations
 
+import json
 import re
+import sqlite3
+import threading
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
-from brainfump.events import Event
+from brainfump._locking import locked
+from brainfump.events import Event, utc_now
 
 SEVERITIES = ("info", "warning", "high", "critical")
+RULE_STATUSES = frozenset({"active", "revoked", "superseded"})
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,10 @@ class Rule:
             "message": self.message,
             "source": self.source,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Rule":
+        return cls(**data)
 
 
 @dataclass(frozen=True)
@@ -169,3 +179,110 @@ class RuntimeChecker:
             else:
                 raise ValueError(f"unknown check type: {check_name!r}")
         return violations
+
+
+_RULE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS rules (
+    rule_id    TEXT PRIMARY KEY,
+    definition TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    source     TEXT,
+    valid_from TEXT NOT NULL,
+    valid_to   TEXT,
+    supersedes TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rules_status ON rules (status);
+"""
+
+
+class RuleStore:
+    """E-1 — persistente, versionierte Rules Engine (vfs://rules/).
+
+    Kompilierte Regeln werden dauerhaft gespeichert, statt bei jedem Neustart
+    aus correction-Events neu abgeleitet zu werden. Regeln haben einen Status
+    (active/revoked/superseded), lassen sich also zurücknehmen und versionieren
+    — ein Nutzer, der eine frühere Korrektur widerruft, deaktiviert die Regel,
+    ohne das append-only Event Log anzutasten.
+    """
+
+    def __init__(self, path: str = ":memory:") -> None:
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.executescript(_RULE_SCHEMA)
+
+    @locked
+    def exists(self, rule_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM rules WHERE rule_id = ?", (rule_id,)
+        ).fetchone()
+        return row is not None
+
+    @locked
+    def add(self, rule: Rule, source: str | None = None, valid_from: str | None = None) -> Rule:
+        """Regel als 'active' persistieren. Idempotent (INSERT OR IGNORE):
+        eine bereits vorhandene rule_id — auch eine revoked/superseded — wird
+        NICHT überschrieben, damit Backfill eine zurückgenommene Regel nicht
+        wiederbelebt."""
+        self._conn.execute(
+            "INSERT OR IGNORE INTO rules VALUES (?, ?, 'active', ?, ?, NULL, NULL, ?)",
+            (
+                rule.rule_id,
+                json.dumps(rule.to_dict()),
+                source if source is not None else rule.source,
+                valid_from or date.today().isoformat(),
+                utc_now(),
+            ),
+        )
+        self._conn.commit()
+        return rule
+
+    @locked
+    def active(self) -> list[Rule]:
+        rows = self._conn.execute(
+            "SELECT definition FROM rules WHERE status = 'active' ORDER BY created_at, rule_id"
+        )
+        return [Rule.from_dict(json.loads(r[0])) for r in rows]
+
+    @locked
+    def status_of(self, rule_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT status FROM rules WHERE rule_id = ?", (rule_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+    @locked
+    def revoke(self, rule_id: str, valid_to: str | None = None) -> bool:
+        cur = self._conn.execute(
+            "UPDATE rules SET status = 'revoked', valid_to = ? WHERE rule_id = ? AND status = 'active'",
+            (valid_to or date.today().isoformat(), rule_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    @locked
+    def supersede(self, old_rule_id: str, new_rule: Rule, source: str | None = None) -> Rule:
+        """Alte Regel auf 'superseded' setzen und die neue als Nachfolger
+        (mit supersedes-Verweis) aktivieren — versionierte Regel-Historie."""
+        today = date.today().isoformat()
+        self._conn.execute(
+            "UPDATE rules SET status = 'superseded', valid_to = ? WHERE rule_id = ?",
+            (today, old_rule_id),
+        )
+        self._conn.execute(
+            "INSERT OR REPLACE INTO rules VALUES (?, ?, 'active', ?, ?, NULL, ?, ?)",
+            (
+                new_rule.rule_id,
+                json.dumps(new_rule.to_dict()),
+                source if source is not None else new_rule.source,
+                today,
+                old_rule_id,
+                utc_now(),
+            ),
+        )
+        self._conn.commit()
+        return new_rule
+
+    @locked
+    def __len__(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0]

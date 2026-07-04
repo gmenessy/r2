@@ -78,7 +78,7 @@ Verifikation: `pyflakes` clean, `pytest` 97/97 grün.
 
 | Epic | Beschreibung |
 |------|--------------|
-| E-1 · Persistente Rules Engine | Regeln aktuell nur im RAM (Rekompilierung beim Start). Eigene `rules`-Tabelle mit Versionierung statt Re-Derivation. |
+| E-1 · Persistente Rules Engine | **✅ erledigt.** `RuleStore` (SQLite, versioniert: active/revoked/superseded) in `rules.py`; der Kernel lädt aktive Regeln aus dem Store statt sie bei jedem Start neu abzuleiten (idempotenter Backfill für Bestandsdaten). `kernel.revoke_rule()` nimmt eine erzwungene Regel zurück, ohne das append-only Event Log anzutasten. |
 | E-2 · Skalierbares Retrieval/Graph | **Teil 1 erledigt** (lexikalischer invertierter Index `active_by_tokens`, p95 ~48 ms). Offen: ANN/Vektor-Index für Embeddings, dedizierte Graph-Schicht (A-MEM/Zettelkasten), O(n²) in der Consolidation. |
 | E-3 · Wiki-Projektion | Menschenlesbare Memory-Seiten pro Akte (Spec-Abschnitt 7, v0.3). |
 | E-4 · Postgres-Backend | SQLite-Store-Abstraktion für Mehrbenutzer/Mandanten, Migrationen, Nebenläufigkeit. |
