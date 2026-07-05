@@ -128,5 +128,10 @@ def test_http_roundtrip():
         assert any(c["memory_type"] == "risk" for c in cards)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/") as r:
             assert "Agentische Akte" in r.read().decode()
+        # E-3: Wiki-Projektion der Akte als Markdown.
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/wiki?case=akte_1") as r:
+            wiki = r.read().decode()
+        assert "# Akte: akte_1" in wiki
+        assert "v.pdf" in wiki
     finally:
         server.shutdown()

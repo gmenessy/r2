@@ -132,6 +132,10 @@ class AgenticAkte:
     def memory(self, case: str) -> list[dict[str, Any]]:
         return [c.to_dict() for c in self.kernel.cards.active(case_id=case)]
 
+    def wiki(self, case: str) -> str:
+        """Menschenlesbare Markdown-Projektion der Akte (E-3)."""
+        return self.kernel.wiki_page(case)
+
     # -- Gatekeeper ---------------------------------------------------------------------
 
     def check_action(

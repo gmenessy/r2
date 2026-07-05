@@ -74,6 +74,9 @@ curl -X POST http://127.0.0.1:8080/api/gatekeeper/check \
 | `brainfump/retrieval.py` | fRAG-Ranking: semantic + case + recency + confidence + trust + risk + governance; austauschbare `Similarity` (lexikalisch oder Embedding) |
 | `brainfump/consolidation.py` | Offline: Dedupe, trust-gewichtete Widersprüche, Archivierung |
 | `brainfump/trust.py` | Trust & Provenance: `TrustPolicy` — Vertrauen je Quelle, Autorisierung auf globale DNA/Regeln |
+| `brainfump/graph.py` | Memory Graph (A-MEM/Zettelkasten): typisierte Kanten (supersedes/contradicts/depends_on …), `kernel.link/related/explain` |
+| `brainfump/wiki.py` | Wiki-Projektion: menschenlesbare Markdown-Seiten pro Akte (`kernel.wiki_page`) |
+| `brainfump/rules.py` | Korrekturen → Regeln (TRACE) + Runtime Checks + persistenter `RuleStore` (versioniert, revoke) |
 | `brainfump/evaluation.py` | Memory-Metriken + Golden-Scenario-Harness |
 | `brainfump/kernel.py` | Fassade, verdrahtet die Pipeline (`BrainFumpKernel(similarity=…, trust=…)`) |
 | `brainfump/webkit.py` | Gemeinsamer Web-Baukasten: Routing, Validierung, `/api/health` |

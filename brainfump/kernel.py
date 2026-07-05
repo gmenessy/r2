@@ -140,6 +140,18 @@ class BrainFumpKernel:
         cards = [self.cards.get(nid) for nid in self.graph.neighbors(card_id, rel=rel, direction=direction)]
         return [c for c in cards if c is not None]
 
+    def wiki_page(self, case_id: str, max_events: int = 15) -> str:
+        """Menschenlesbare Markdown-Projektion einer Akte (Spec §7)."""
+        from brainfump.wiki import WikiProjection
+
+        return WikiProjection(self).render_case(case_id, max_events=max_events)
+
+    def wiki_index(self) -> str:
+        """Markdown-Index aller Akten."""
+        from brainfump.wiki import WikiProjection
+
+        return WikiProjection(self).render_index()
+
     def explain(self, card_id: str) -> list[dict[str, Any]]:
         """Menschenlesbare Begründung: welche Beziehungen den Zustand einer
         Karte beeinflusst haben (Supersedes, Widersprüche, Ausnahmen …)."""

@@ -24,7 +24,7 @@ from http.server import ThreadingHTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from brainfump import BrainFumpKernel, __version__  # noqa: E402
-from brainfump.webkit import Request, WebApp, require, serve  # noqa: E402
+from brainfump.webkit import Request, Response, WebApp, require, serve, text_response  # noqa: E402
 from apps.agentic_akte.akte import AgenticAkte  # noqa: E402
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -46,6 +46,11 @@ def build_app(akte: AgenticAkte) -> WebApp:
     @app.get("/api/memory")
     def _memory(request: Request) -> dict:
         return {"cards": akte.memory(request.query.get("case", "default"))}
+
+    @app.get("/api/wiki")
+    def _wiki(request: Request) -> Response:
+        md = akte.wiki(request.query.get("case", "default"))
+        return text_response(md, "text/markdown; charset=utf-8")
 
     @app.get("/api/deadlines")
     def _deadlines(request: Request) -> dict:

@@ -18,6 +18,7 @@ from brainfump.graph import Edge, MemoryGraph
 from brainfump.matching import ActionMatcher, EmbeddingIntentMatcher, IntentMatcher
 from brainfump.rules import Rule, RuleCompiler, RuleStore, RuntimeChecker, Violation
 from brainfump.trust import TrustPolicy
+from brainfump.wiki import WikiProjection
 from brainfump.gatekeeper import GateDecision, GateFinding, GateMode, MemoryGatekeeper
 from brainfump.embeddings import HashingEmbedder, SqliteVectorCache
 from brainfump.retrieval import (
@@ -70,4 +71,5 @@ __all__ = [
     "TrustPolicy",
     "Violation",
     "Weights",
+    "WikiProjection",
 ]
