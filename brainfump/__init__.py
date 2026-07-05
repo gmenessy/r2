@@ -14,6 +14,7 @@ from brainfump.events import Event, EventLog, EVENT_TYPES
 from brainfump.memory_cards import MemoryCard, MemoryCardStore, MEMORY_TYPES
 from brainfump.extractor import MemoryExtractor
 from brainfump.evolution import EvolutionMemory, EvolutionPatch, PATCH_TYPES
+from brainfump.graph import Edge, MemoryGraph
 from brainfump.matching import ActionMatcher, EmbeddingIntentMatcher, IntentMatcher
 from brainfump.rules import Rule, RuleCompiler, RuleStore, RuntimeChecker, Violation
 from brainfump.trust import TrustPolicy
@@ -36,6 +37,7 @@ __all__ = [
     "BrainFumpKernel",
     "Consolidator",
     "EVENT_TYPES",
+    "Edge",
     "EmbeddingSimilarity",
     "EvaluationHarness",
     "Event",
@@ -56,6 +58,7 @@ __all__ = [
     "MemoryCardStore",
     "MemoryExtractor",
     "MemoryGatekeeper",
+    "MemoryGraph",
     "PATCH_TYPES",
     "Retriever",
     "Rule",

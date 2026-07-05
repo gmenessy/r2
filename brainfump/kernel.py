@@ -21,6 +21,7 @@ from brainfump.extractor import MemoryExtractor
 from brainfump.gatekeeper import GateDecision, MemoryGatekeeper
 from brainfump.memory_cards import MemoryCard, MemoryCardStore
 from brainfump.retrieval import Retriever, ScoredCard, Similarity
+from brainfump.graph import Edge, MemoryGraph
 from brainfump.rules import RuleCompiler, RuleStore, RuntimeChecker
 from brainfump.trust import TrustPolicy
 
@@ -40,19 +41,21 @@ class BrainFumpKernel:
         trust: "TrustPolicy | None" = None,
     ) -> None:
         if base_path is None:
-            event_path = card_path = patch_path = rule_path = ":memory:"
+            event_path = card_path = patch_path = rule_path = graph_path = ":memory:"
         else:
             os.makedirs(base_path, exist_ok=True)
             event_path = os.path.join(base_path, "events.db")
             card_path = os.path.join(base_path, "cards.db")
             patch_path = os.path.join(base_path, "patches.db")
             rule_path = os.path.join(base_path, "rules.db")
+            graph_path = os.path.join(base_path, "graph.db")
 
         self.trust = trust or TrustPolicy()
         self.events = EventLog(event_path)
         self.cards = MemoryCardStore(card_path)
+        self.graph = MemoryGraph(graph_path)
         self.extractor = MemoryExtractor(self.cards)
-        self.evolution = EvolutionMemory(self.cards, patch_path)
+        self.evolution = EvolutionMemory(self.cards, patch_path, graph=self.graph)
         self.compiler = RuleCompiler()
         self.checker = RuntimeChecker()
         self.rule_store = RuleStore(rule_path)
@@ -60,7 +63,7 @@ class BrainFumpKernel:
             self.cards, self.checker, min_alternative_trust=self.trust.alternative_min
         )
         self.retriever = Retriever(self.cards, similarity=similarity)
-        self.consolidator = Consolidator(self.cards)
+        self.consolidator = Consolidator(self.cards, graph=self.graph)
 
         # E-1: Regeln kommen aus dem persistenten RuleStore, nicht aus
         # wiederholter Ableitung. Einmaliger, idempotenter Backfill seedet den
@@ -121,10 +124,37 @@ class BrainFumpKernel:
     def patch(self, patch: EvolutionPatch) -> MemoryCard | None:
         return self.evolution.apply_patch(patch)
 
+    def link(self, src_card_id: str, dst_card_id: str, rel: str = "depends_on", **meta: Any) -> Edge:
+        """Explizite Beziehung zwischen zwei Memory Cards deklarieren
+        (z. B. eine Abhängigkeit), die im Graph traversierbar wird."""
+        return self.graph.add_edge(src_card_id, dst_card_id, rel, meta=meta or None)
+
     # -- Lesen ----------------------------------------------------------------
 
     def search(self, query: str, case_id: str | None = None, k: int = 5) -> list[ScoredCard]:
         return self.retriever.search(query, case_id=case_id, k=k)
+
+    def related(self, card_id: str, rel: str | None = None, direction: str = "both") -> list[MemoryCard]:
+        """Nachbar-Karten von ``card_id`` im Memory Graph (optional nach
+        Relationstyp/Richtung), als aufgelöste MemoryCards."""
+        cards = [self.cards.get(nid) for nid in self.graph.neighbors(card_id, rel=rel, direction=direction)]
+        return [c for c in cards if c is not None]
+
+    def explain(self, card_id: str) -> list[dict[str, Any]]:
+        """Menschenlesbare Begründung: welche Beziehungen den Zustand einer
+        Karte beeinflusst haben (Supersedes, Widersprüche, Ausnahmen …)."""
+        out: list[dict[str, Any]] = []
+        for edge in self.graph.edges_of(card_id):
+            other_id = edge.dst if edge.src == card_id else edge.src
+            other = self.cards.get(other_id)
+            out.append({
+                "rel": edge.rel,
+                "direction": "out" if edge.src == card_id else "in",
+                "other_id": other_id,
+                "other_statement": other.statement if other else None,
+                "meta": edge.meta,
+            })
+        return out
 
     # -- Runtime ---------------------------------------------------------------
 

@@ -71,8 +71,11 @@ CREATE INDEX IF NOT EXISTS idx_patches_target ON patches (target_memory);
 class EvolutionMemory:
     """Patch-basierte Versionierung über dem Memory Card Store."""
 
-    def __init__(self, store: MemoryCardStore, path: str = ":memory:") -> None:
+    def __init__(self, store: MemoryCardStore, path: str = ":memory:", graph=None) -> None:
         self.store = store
+        # Optionaler Memory Graph: Versionierungs-/Ausnahme-Beziehungen werden
+        # als typisierte Kanten mitgeschrieben (None = kein Graph, unverändert).
+        self.graph = graph
         # Eigenes Lock für die Patch-Connection. Hält stets nur dieses Lock und
         # ruft dann store-Methoden (die ihr eigenes Lock nehmen) — nie umgekehrt,
         # daher keine Lock-Zyklen/Deadlocks.
@@ -105,7 +108,9 @@ class EvolutionMemory:
                 status="active",
                 created_at=utc_now(),
             )
-            return self.store.supersede(target.card_id, new_card)
+            result = self.store.supersede(target.card_id, new_card)
+            self._link(result.card_id, target.card_id, "supersedes")
+            return result
 
         if patch.patch_type == "scope_exception":
             # Die Grundregel bleibt aktiv; für den Ausnahme-Scope entsteht
@@ -121,7 +126,9 @@ class EvolutionMemory:
                 evidence=target.evidence,
                 payload={**target.payload, "exception_to": target.card_id},
             )
-            return self.store.add(exception)
+            result = self.store.add(exception)
+            self._link(result.card_id, target.card_id, "exception_to")
+            return result
 
         if patch.patch_type == "extend":
             new_card = replace(
@@ -133,12 +140,18 @@ class EvolutionMemory:
                 status="active",
                 created_at=utc_now(),
             )
-            return self.store.supersede(target.card_id, new_card)
+            result = self.store.supersede(target.card_id, new_card)
+            self._link(result.card_id, target.card_id, "supersedes")
+            return result
 
         # deprecate
         self.store.set_status(target.card_id, "archived")
         self.store.set_valid_to(target.card_id, patch.valid_from)
         return None
+
+    def _link(self, src: str, dst: str, rel: str) -> None:
+        if self.graph is not None:
+            self.graph.add_edge(src, dst, rel)
 
     @locked
     def patches_for(self, target_memory: str) -> list[EvolutionPatch]:

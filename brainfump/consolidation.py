@@ -30,8 +30,11 @@ class ConsolidationReport:
 
 
 class Consolidator:
-    def __init__(self, store: MemoryCardStore) -> None:
+    def __init__(self, store: MemoryCardStore, graph=None) -> None:
         self.store = store
+        # Optionaler Memory Graph: erkannte Widersprüche werden als
+        # contradicts-Kanten (mit winner/loser) festgehalten.
+        self.graph = graph
 
     def consolidate(
         self,
@@ -73,27 +76,43 @@ class Consolidator:
 
     def _detect_contradictions(self, case_id: str | None, report: ConsolidationReport) -> None:
         """Zwei aktive Karten widersprechen sich, wenn sie im selben Scope
-        dieselbe Kernaussage einmal verneint und einmal bejaht treffen."""
+        dieselbe Kernaussage einmal verneint und einmal bejaht treffen.
+
+        Vergleiche laufen nur innerhalb von (case_id, memory_type)-Buckets —
+        das schneidet die O(n²)-Paarmenge auf die tatsächlich vergleichbaren
+        Karten zu (Karten verschiedener Akten/Typen können nie widersprechen)."""
         cards = self.store.active(case_id=case_id, include_global=case_id is None)
-        for i, a in enumerate(cards):
-            for b in cards[i + 1 :]:
-                if a.memory_type != b.memory_type or a.case_id != b.case_id:
-                    continue
-                if a.scope and b.scope and not (set(a.scope) & set(b.scope)):
-                    continue
-                if self._contradicts(a.statement, b.statement):
+        buckets: dict[tuple, list] = {}
+        for card in cards:
+            buckets.setdefault((card.case_id, card.memory_type), []).append(card)
+
+        for bucket in buckets.values():
+            for i, a in enumerate(bucket):
+                for b in bucket[i + 1 :]:
+                    if a.scope and b.scope and not (set(a.scope) & set(b.scope)):
+                        continue
+                    if not self._contradicts(a.statement, b.statement):
+                        continue
                     report.contradictions.append((a.card_id, b.card_id))
                     # Trust-gewichtet: die vertrauenswürdigere Aussage überlebt.
                     # Nur bei Gleichstand werden beide stillgelegt — so kann
                     # eine untrusted Quelle wahres Wissen nicht per Widerspruch
                     # löschen (Truth-Suppression).
                     if a.trust > b.trust:
+                        loser, winner = b.card_id, a.card_id
                         self.store.set_status(b.card_id, "contradicted")
                     elif b.trust > a.trust:
+                        loser, winner = a.card_id, b.card_id
                         self.store.set_status(a.card_id, "contradicted")
                     else:
+                        loser, winner = None, None
                         self.store.set_status(a.card_id, "contradicted")
                         self.store.set_status(b.card_id, "contradicted")
+                    if self.graph is not None:
+                        self.graph.add_edge(
+                            a.card_id, b.card_id, "contradicts",
+                            meta={"winner": winner, "loser": loser},
+                        )
 
     @staticmethod
     def _contradicts(stmt_a: str, stmt_b: str) -> bool:
