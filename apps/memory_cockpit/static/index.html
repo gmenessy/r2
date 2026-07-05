@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BrainFump · Memory Cockpit</title>
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+      --muted: #8b949e; --accent: #58a6ff;
+      --ok: #2ea043; --warn: #d29922; --block: #f85149; --review: #a371f7;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); overflow: hidden; }
+    header { padding: .7rem 1.2rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 1rem; }
+    header h1 { font-size: 1.05rem; margin: 0; }
+    header .sub { color: var(--muted); font-size: .8rem; }
+    header select { margin-left: auto; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .35rem .6rem; }
+    main { display: flex; height: calc(100vh - 52px); }
+    #graph { flex: 1; }
+    #graph svg { width: 100%; height: 100%; display: block; cursor: grab; }
+    aside { width: 380px; border-left: 1px solid var(--border); background: var(--panel); overflow-y: auto; padding: 1rem; }
+    aside h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 1.2rem 0 .5rem; }
+    aside h2:first-child { margin-top: 0; }
+    .node-label { font-size: 10px; fill: var(--text); pointer-events: none; }
+    .edge { stroke: var(--muted); stroke-width: 1.5; opacity: .6; }
+    .edge.contradicts { stroke: var(--block); stroke-width: 2.5; stroke-dasharray: 2 3; opacity: .9; }
+    .edge.supersedes { stroke: var(--accent); stroke-dasharray: 6 3; }
+    .edge.exception_to { stroke: var(--review); }
+    .edge.depends_on { stroke: var(--ok); }
+    .card-node { cursor: pointer; stroke: var(--bg); stroke-width: 2; }
+    .card-node.selected { stroke: #fff; stroke-width: 3; }
+    .card-node.superseded, .card-node.contradicted { opacity: .35; }
+    .detail { font-size: .85rem; line-height: 1.5; }
+    .badge { display: inline-block; font-size: .7rem; padding: .1rem .45rem; border-radius: 999px; border: 1px solid var(--border); margin-right: .3rem; }
+    .rel { border-left: 2px solid var(--border); padding: .2rem .6rem; margin: .3rem 0; font-size: .8rem; }
+    label { display: block; font-size: .78rem; color: var(--muted); margin: .5rem 0 .2rem; }
+    input, select.field { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: .45rem; font-size: .85rem; }
+    button { margin-top: .6rem; background: var(--accent); color: #04101f; border: 0; border-radius: 6px; padding: .5rem .9rem; font-size: .85rem; font-weight: 600; cursor: pointer; }
+    .gate { margin-top: .7rem; border: 1px solid; border-radius: 6px; padding: .6rem .8rem; font-size: .82rem; display: none; }
+    .gate.allow { display: block; border-color: var(--ok); }
+    .gate.warn { display: block; border-color: var(--warn); }
+    .gate.require_review { display: block; border-color: var(--review); }
+    .gate.block, .gate.suggest_alternative { display: block; border-color: var(--block); }
+    .gate .mode { font-weight: 700; text-transform: uppercase; font-size: .72rem; }
+    .gate ul { margin: .4rem 0 0; padding-left: 1.1rem; }
+    .legend { position: absolute; bottom: 12px; left: 12px; font-size: .72rem; color: var(--muted); background: rgba(13,17,23,.8); padding: .5rem .7rem; border: 1px solid var(--border); border-radius: 6px; }
+    .legend span { display: inline-block; margin-right: .8rem; }
+    .swatch { display: inline-block; width: 20px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 3px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🧭 BrainFump · Memory Cockpit</h1>
+    <span class="sub">Das Cognitive Core, sichtbar gemacht — Wissensgraph · Provenienz · Live-Gatekeeper</span>
+    <select id="case"></select>
+  </header>
+  <main>
+    <div id="graph" style="position:relative">
+      <svg id="svg"></svg>
+      <div class="legend">
+        <span><span class="swatch" style="border-color:var(--accent);border-top-style:dashed"></span>ersetzt</span>
+        <span><span class="swatch" style="border-color:var(--block);border-top-style:dashed"></span>widerspricht</span>
+        <span><span class="swatch" style="border-color:var(--review)"></span>Ausnahme</span>
+        <span><span class="swatch" style="border-color:var(--ok)"></span>hängt ab</span>
+      </div>
+    </div>
+    <aside>
+      <div id="detail">
+        <h2>Karte wählen</h2>
+        <p class="detail" style="color:var(--muted)">Klick einen Knoten im Graphen, um Aussage, Typ, Vertrauen (Provenienz) und Beziehungen zu sehen.</p>
+      </div>
+
+      <h2>Live-Gatekeeper</h2>
+      <p class="detail" style="color:var(--muted);margin-top:0">Simuliere eine geplante Aktion — das Gedächtnis entscheidet.</p>
+      <label for="action">Aktionstyp</label>
+      <select id="action" class="field">
+        <option value="apply_fix">apply_fix (Fix anwenden)</option>
+        <option value="modify_file">modify_file (Datei ändern)</option>
+        <option value="drop_prod_tables">drop_prod_tables (Prod-Tabellen löschen)</option>
+        <option value="finish_task">finish_task (Task abschließen)</option>
+      </select>
+      <label for="sig">error_signature (optional)</label>
+      <input id="sig" placeholder="TimeoutError: gateway">
+      <label for="files">files (Komma-getrennt, optional)</label>
+      <input id="files" placeholder="payment.py">
+      <label for="react"><input type="checkbox" id="react" style="width:auto"> package.json enthält react (für finish_task)</label>
+      <button id="run">Aktion prüfen</button>
+      <div class="gate" id="gate"></div>
+    </aside>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

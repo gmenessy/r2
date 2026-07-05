@@ -144,6 +144,7 @@ Auf dem Kernel aufbauende Subprojekte, ausgeliefert über Docker Compose:
 | [`apps/coding_agent_guard`](apps/coding_agent_guard/) | 8020 | PROJECTMEM-Wächter für Coding Agents: Pre-Edit Gate, Kontext-Summary, fertiger Claude-Code-Hook |
 | [`apps/prompt_optimizer`](apps/prompt_optimizer/) | 8030 | Prompt-Testlabor mit Langzeitgedächtnis: blockt gescheiterte Varianten, kompiliert Stil-Korrekturen zu Output-Checks |
 | [`apps/memory_house`](apps/memory_house/) | 8040 | Das Haus, das sich erinnert 🏠 — Räume als Akten, Hausregeln als Runtime-Checks |
+| [`apps/memory_cockpit`](apps/memory_cockpit/) | 8050 | 🧭 **One More Thing**: Cognitive Core sichtbar gemacht — interaktiver Wissensgraph, Provenienz, Live-Gatekeeper |
 
 ```bash
 docker compose up -d          # alle vier Apps

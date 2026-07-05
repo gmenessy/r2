@@ -8,6 +8,7 @@
 #   8020  coding-agent-guard  PROJECTMEM-Wächter für Coding Agents
 #   8030  prompt-optimizer    Prompt-Testlabor mit Langzeitgedächtnis
 #   8040  memory-house        Das Haus, das sich erinnert 🏠
+#   8050  memory-cockpit      Cognitive Core sichtbar: Graph + Live-Gatekeeper 🧭
 
 services:
   agentic-akte:
@@ -48,6 +49,14 @@ services:
       - "8040:8040"
     volumes:
       - memory_house_data:/data
+    restart: unless-stopped
+
+  memory-cockpit:
+    build:
+      context: .
+      dockerfile: apps/memory_cockpit/Dockerfile
+    ports:
+      - "8050:8050"
     restart: unless-stopped
 
 volumes:
