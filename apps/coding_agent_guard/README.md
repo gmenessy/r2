@@ -31,7 +31,33 @@ python3 apps/coding_agent_guard/server.py --port 8020 --data ./data
 | `GET /api/summary?repo=` | Markdown-Projektgedächtnis |
 | `GET /api/stats?repo=` | Events, Cards, Gate-Checks, Interventionen |
 
-## Claude-Code-Integration
+## MCP-Server (nativ andocken, E-5)
+
+Statt HTTP kann der Guard als **MCP-Server** (stdio, JSON-RPC 2.0) laufen und
+seine Funktionen als Tools bereitstellen — Coding Agents docken nativ an:
+
+```bash
+python3 -m apps.coding_agent_guard.mcp_server --data ./data
+```
+
+Beispiel-Eintrag (`.mcp.json` / Claude-Code-Config):
+
+```json
+{
+  "mcpServers": {
+    "brainfump-guard": {
+      "command": "python3",
+      "args": ["-m", "apps.coding_agent_guard.mcp_server", "--data", "./data"],
+      "cwd": "/pfad/zu/r2"
+    }
+  }
+}
+```
+
+Tools: `report_event`, `pre_edit_gate`, `project_summary`, `guard_stats`.
+Ein `pre_edit_gate` mit `mode: block` wird als Tool-Fehler (`isError`) markiert.
+
+## Claude-Code-Integration (Hook)
 
 `hooks/pre_edit_gate.py` ist ein fertiger PreToolUse-Hook: Er fragt vor
 jedem `Edit`/`Write` das Gate und blockiert bei `block`/`require_review`

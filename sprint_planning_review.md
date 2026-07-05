@@ -81,8 +81,8 @@ Verifikation: `pyflakes` clean, `pytest` 97/97 grün.
 | E-1 · Persistente Rules Engine | **✅ erledigt.** `RuleStore` (SQLite, versioniert: active/revoked/superseded) in `rules.py`; der Kernel lädt aktive Regeln aus dem Store statt sie bei jedem Start neu abzuleiten (idempotenter Backfill für Bestandsdaten). `kernel.revoke_rule()` nimmt eine erzwungene Regel zurück, ohne das append-only Event Log anzutasten. |
 | E-2 · Skalierbares Retrieval/Graph | **Weitgehend erledigt.** Lexikalischer invertierter Index (`active_by_tokens`, p95 ~48 ms) **und** dedizierte Graph-Schicht `MemoryGraph` (A-MEM/Zettelkasten: typisierte Kanten supersedes/exception_to/contradicts/depends_on, persistent, `kernel.link/related/explain`). Consolidation schreibt Widerspruchs-Kanten + bucketet nach (case, type) → weniger O(n²). **Offen:** ANN/Vektor-Index für den Embedding-Pfad (braucht ein echtes Modell). |
 | E-3 · Wiki-Projektion | **✅ erledigt.** `WikiProjection` (`wiki.py`) rendert menschenlesbare Markdown-Seiten pro Akte aus Store + Graph + Verlauf (read-only, „nicht die alleinige Wahrheit"). `kernel.wiki_page/wiki_index`; `/api/wiki` in der Agentischen Akte. |
-| E-4 · Postgres-Backend | SQLite-Store-Abstraktion für Mehrbenutzer/Mandanten, Migrationen, Nebenläufigkeit. |
-| E-5 · Coding-Agent-Guard als MCP-Server | Echter MCP-Transport statt nur HTTP, damit Coding Agents nativ andocken. |
+| E-4 · Mandantenfähigkeit / Backend | **Mandantenfähigkeit ✅** (`TenantManager`, `tenancy.py`): isolierter Kernel je Mandant (eigene DB-Dateien), `kernel_for/tenants/drop`, `kernel_factory`-Naht fürs Backend. **Offen:** echter Postgres-Adapter (offline nicht testbar — bewusst nicht gefaked; die Naht ist vorbereitet). |
+| E-5 · Coding-Agent-Guard als MCP-Server | **✅ erledigt.** `apps/coding_agent_guard/mcp_server.py`: protokoll-korrekter MCP-Stdio-Server (JSON-RPC 2.0, initialize/tools.list/tools.call) mit Tools report_event/pre_edit_gate/project_summary/guard_stats; block → isError. Stdlib, ohne SDK. |
 
 ---
 

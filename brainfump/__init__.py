@@ -17,6 +17,7 @@ from brainfump.evolution import EvolutionMemory, EvolutionPatch, PATCH_TYPES
 from brainfump.graph import Edge, MemoryGraph
 from brainfump.matching import ActionMatcher, EmbeddingIntentMatcher, IntentMatcher
 from brainfump.rules import Rule, RuleCompiler, RuleStore, RuntimeChecker, Violation
+from brainfump.tenancy import TenantManager
 from brainfump.trust import TrustPolicy
 from brainfump.wiki import WikiProjection
 from brainfump.gatekeeper import GateDecision, GateFinding, GateMode, MemoryGatekeeper
@@ -68,6 +69,7 @@ __all__ = [
     "RuntimeChecker",
     "Similarity",
     "SqliteVectorCache",
+    "TenantManager",
     "TrustPolicy",
     "Violation",
     "Weights",
