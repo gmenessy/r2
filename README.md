@@ -8,7 +8,8 @@ BrainFump speichert Erinnerungen nicht nur — es versioniert, verdichtet,
 bewertet sie, übersetzt sie in ausführbare Regeln und kann Agenten-Aktionen
 warnen oder blockieren, bevor sie ausgeführt werden.
 
-Vollständige Spezifikation: [docs/SPEC_NextGen_v0.2.md](docs/SPEC_NextGen_v0.2.md)
+Vollständige Spezifikation: [docs/SPEC_NextGen_v0.3.md](docs/SPEC_NextGen_v0.3.md)
+(aktueller Stand; die ursprüngliche [v0.2](docs/SPEC_NextGen_v0.2.md) bleibt als Historie)
 
 ## Schnellstart
 
