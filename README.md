@@ -148,8 +148,8 @@ Auf dem Kernel aufbauende Subprojekte, ausgeliefert über Docker Compose:
 | [`apps/memory_cockpit`](apps/memory_cockpit/) | 8050 | 🧭 **One More Thing**: Cognitive Core sichtbar gemacht — interaktiver Wissensgraph, Provenienz, Live-Gatekeeper |
 
 ```bash
-docker compose up -d          # alle vier Apps
-docker compose up -d memory-house   # oder einzeln
+docker compose up -d          # alle fünf Apps
+docker compose up -d memory-cockpit   # oder einzeln
 ```
 
 Jeder Service bietet `GET /api/health` (für den Docker-`HEALTHCHECK`) und
@@ -159,7 +159,7 @@ Jeder Service bietet `GET /api/health` (für den Docker-`HEALTHCHECK`) und
 
 ```bash
 pip install -e ".[dev]"
-python3 -m pytest --cov      # 138 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~93,9 %)
+python3 -m pytest --cov      # 224 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~94,8 %)
 python3 -m pyflakes brainfump apps
 ```
 
