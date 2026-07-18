@@ -121,8 +121,16 @@ def main() -> None:  # pragma: no cover - manueller Einstiegspunkt
     kernel = BrainFumpKernel(os.path.join(args.data, "memory"))
     ledger = BillingLedger(os.path.join(args.data, "billing.db"))
     traces = TraceStore(os.path.join(args.data, "traces.db"))
+    # AGENT_SIM=1 → deterministischer LLM-Ersatz: die komplette Plattform
+    # läuft offline (Demo, Integrationstests, CI) — kein vLLM nötig.
+    if os.environ.get("AGENT_SIM", "").lower() in ("1", "true", "yes"):
+        from apps.agent_layer.simllm import SimulatedLLM
+
+        llm: VLLMClient | SimulatedLLM = SimulatedLLM()
+    else:
+        llm = VLLMClient()
     runtime = AgentRuntime(
-        llm=VLLMClient(),
+        llm=llm,
         registry=builtin_registry(kernel),
         traces=traces,
         kernel=kernel,

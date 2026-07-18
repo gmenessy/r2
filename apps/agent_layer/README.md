@@ -55,6 +55,17 @@ Jeder Run durchläuft vier harte Querschnitte:
 
 ## Schnellstart
 
+**Ohne GPU ausprobieren** — `AGENT_SIM=1` ersetzt das Modell durch den
+deterministischen [`SimulatedLLM`](simllm.py) (Sandbox, Gatekeeper, Billing
+und xAI laufen unverändert; die Demo-App [Agent Flightdeck](../agent_flightdeck/)
+macht das klickbar):
+
+```bash
+AGENT_SIM=1 python3 apps/agent_layer/server.py --data ./data
+```
+
+**Mit echtem Modell:**
+
 ```bash
 docker compose up -d agent-layer          # Plattform (CPU)
 # vLLM separat, z. B.:

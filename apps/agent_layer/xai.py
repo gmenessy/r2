@@ -103,6 +103,20 @@ class TraceStore:
             "answer": run[4], "started": run[5], "finished": run[6], "steps": steps,
         }
 
+    @locked
+    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Jüngste Runs (neueste zuerst) für Übersichten/UIs."""
+        rows = self._conn.execute(
+            "SELECT run_id, tenant, goal, status, started, finished FROM runs"
+            " ORDER BY started DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {"run_id": r[0], "tenant": r[1], "goal": r[2], "status": r[3],
+             "started": r[4], "finished": r[5]}
+            for r in rows
+        ]
+
     def explain(self, run_id: str) -> dict[str, Any] | None:
         """Verdichtet den Trace zur Kausalkette der Antwort."""
         trace = self.trace(run_id)

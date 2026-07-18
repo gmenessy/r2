@@ -147,9 +147,10 @@ Auf dem Kernel aufbauende Subprojekte, ausgeliefert über Docker Compose:
 | [`apps/memory_house`](apps/memory_house/) | 8040 | Das Haus, das sich erinnert 🏠 — Räume als Akten, Hausregeln als Runtime-Checks |
 | [`apps/memory_cockpit`](apps/memory_cockpit/) | 8050 | 🧭 **One More Thing**: Cognitive Core sichtbar gemacht — interaktiver Wissensgraph, Provenienz, Live-Gatekeeper |
 | [`apps/agent_layer`](apps/agent_layer/) | 8060 | ⚙️ **Agent Execution Layer**: ReAct-Runtime mit Prozess-Sandbox fürs Tool Calling, Billing (API-Keys, Token-Ledger, Budgets), xAI-Traces; LLM via vLLM (OpenAI-kompatibel, z. B. gemini4-31B) |
+| [`apps/agent_flightdeck`](apps/agent_flightdeck/) | 8070 | 🛫 **Agent Flightdeck**: Demo-App (Spesen-Agent) + Live-Cockpit des Agent Layer — vier Ein-Klick-Szenarien (Sandbox-Timeout, Gatekeeper-Block, Budget-Stopp), Trace-Timeline, xAI-Narrativ; läuft offline via SimulatedLLM |
 
 ```bash
-docker compose up -d          # alle sechs Apps
+docker compose up -d          # alle sieben Apps
 docker compose up -d memory-cockpit   # oder einzeln
 ```
 
@@ -160,7 +161,7 @@ Jeder Service bietet `GET /api/health` (für den Docker-`HEALTHCHECK`) und
 
 ```bash
 pip install -e ".[dev]"
-python3 -m pytest --cov      # 268 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~95,4 %)
+python3 -m pytest --cov      # 286 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~95,6 %)
 python3 -m pyflakes brainfump apps
 ```
 

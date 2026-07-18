@@ -14,6 +14,7 @@ from apps.agent_layer.billing import BillingLedger, BudgetExceededError, PriceTa
 from apps.agent_layer.llm import ChatResult, LLMError, VLLMClient
 from apps.agent_layer.runtime import AgentRuntime, RunResult
 from apps.agent_layer.sandbox import ProcessSandbox, SandboxPolicy, SandboxResult
+from apps.agent_layer.simllm import SimulatedLLM
 from apps.agent_layer.tools import ToolRegistry, ToolSpec, builtin_registry
 from apps.agent_layer.xai import TraceStore
 
@@ -28,6 +29,7 @@ __all__ = [
     "RunResult",
     "SandboxPolicy",
     "SandboxResult",
+    "SimulatedLLM",
     "ToolRegistry",
     "ToolSpec",
     "TraceStore",
