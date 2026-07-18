@@ -146,9 +146,10 @@ Auf dem Kernel aufbauende Subprojekte, ausgeliefert über Docker Compose:
 | [`apps/prompt_optimizer`](apps/prompt_optimizer/) | 8030 | Prompt-Testlabor mit Langzeitgedächtnis: blockt gescheiterte Varianten, kompiliert Stil-Korrekturen zu Output-Checks |
 | [`apps/memory_house`](apps/memory_house/) | 8040 | Das Haus, das sich erinnert 🏠 — Räume als Akten, Hausregeln als Runtime-Checks |
 | [`apps/memory_cockpit`](apps/memory_cockpit/) | 8050 | 🧭 **One More Thing**: Cognitive Core sichtbar gemacht — interaktiver Wissensgraph, Provenienz, Live-Gatekeeper |
+| [`apps/agent_layer`](apps/agent_layer/) | 8060 | ⚙️ **Agent Execution Layer**: ReAct-Runtime mit Prozess-Sandbox fürs Tool Calling, Billing (API-Keys, Token-Ledger, Budgets), xAI-Traces; LLM via vLLM (OpenAI-kompatibel, z. B. gemini4-31B) |
 
 ```bash
-docker compose up -d          # alle fünf Apps
+docker compose up -d          # alle sechs Apps
 docker compose up -d memory-cockpit   # oder einzeln
 ```
 
@@ -159,7 +160,7 @@ Jeder Service bietet `GET /api/health` (für den Docker-`HEALTHCHECK`) und
 
 ```bash
 pip install -e ".[dev]"
-python3 -m pytest --cov      # 224 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~94,8 %)
+python3 -m pytest --cov      # 268 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~95,4 %)
 python3 -m pyflakes brainfump apps
 ```
 

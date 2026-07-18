@@ -1,0 +1,36 @@
+"""Agent Execution Layer — ultraleichtgewichtige Ausführungsschicht für
+LLM-Agenten auf dem BrainFump-Kernel.
+
+Säulen (siehe README für die Paper-Basis):
+- ``llm``      OpenAI-kompatibler vLLM-Client (Modell z. B. gemini4-31b)
+- ``sandbox``  Prozess-Sandbox für Tool Calling (rlimits, Timeout, Egress-Sperre)
+- ``tools``    Tool-Registry mit JSON-Schema-Validierung + Builtins
+- ``billing``  API-Keys, Token-Ledger, Budgets (SQLite)
+- ``xai``      Trace-Store + Explain: jeder Run vollständig begründbar
+- ``runtime``  Der eigentliche Agent-Loop (ReAct-Stil, gatekeeper-gesichert)
+"""
+
+from apps.agent_layer.billing import BillingLedger, BudgetExceededError, PriceTable
+from apps.agent_layer.llm import ChatResult, LLMError, VLLMClient
+from apps.agent_layer.runtime import AgentRuntime, RunResult
+from apps.agent_layer.sandbox import ProcessSandbox, SandboxPolicy, SandboxResult
+from apps.agent_layer.tools import ToolRegistry, ToolSpec, builtin_registry
+from apps.agent_layer.xai import TraceStore
+
+__all__ = [
+    "AgentRuntime",
+    "BillingLedger",
+    "BudgetExceededError",
+    "ChatResult",
+    "LLMError",
+    "PriceTable",
+    "ProcessSandbox",
+    "RunResult",
+    "SandboxPolicy",
+    "SandboxResult",
+    "ToolRegistry",
+    "ToolSpec",
+    "TraceStore",
+    "VLLMClient",
+    "builtin_registry",
+]
