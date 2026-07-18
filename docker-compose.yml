@@ -1,6 +1,6 @@
 # BrainFump NextGen — Anwendungs-Suite
 #
-#   docker compose up -d          → alle vier Apps
+#   docker compose up -d          → alle sechs Apps
 #   docker compose up -d <name>   → einzelne App
 #
 # Portschema:
@@ -9,6 +9,8 @@
 #   8030  prompt-optimizer    Prompt-Testlabor mit Langzeitgedächtnis
 #   8040  memory-house        Das Haus, das sich erinnert 🏠
 #   8050  memory-cockpit      Cognitive Core sichtbar: Graph + Live-Gatekeeper 🧭
+#   8060  agent-layer         Agent Execution Layer: Sandbox, Billing, xAI ⚙️
+#   8070  agent-flightdeck    Demo-App + Live-Cockpit des Agent Layer 🛫
 
 services:
   agentic-akte:
@@ -59,8 +61,43 @@ services:
       - "8050:8050"
     restart: unless-stopped
 
+  # Agent Execution Layer — CPU-Container; das LLM (gemini4-31b via vLLM)
+  # läuft als separater Dienst und wird über VLLM_BASE_URL erreicht.
+  agent-layer:
+    build:
+      context: .
+      dockerfile: apps/agent_layer/Dockerfile
+    ports:
+      - "8060:8060"
+    environment:
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8000/v1}
+      AGENT_MODEL: ${AGENT_MODEL:-gemini4-31b}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+    volumes:
+      - agent_layer_data:/data
+    restart: unless-stopped
+
+  # Agent Flightdeck — Demo-App + Schaufenster des Agent Execution Layer.
+  # Läuft standardmäßig mit SimulatedLLM (offline, kein vLLM nötig);
+  # AGENT_SIM=0 + VLLM_BASE_URL schaltet auf das echte Modell um.
+  agent-flightdeck:
+    build:
+      context: .
+      dockerfile: apps/agent_flightdeck/Dockerfile
+    ports:
+      - "8070:8070"
+    environment:
+      AGENT_SIM: ${AGENT_SIM:-1}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8000/v1}
+      AGENT_MODEL: ${AGENT_MODEL:-gemini4-31b}
+    volumes:
+      - agent_flightdeck_data:/data
+    restart: unless-stopped
+
 volumes:
   agentic_akte_data:
   coding_agent_guard_data:
   prompt_optimizer_data:
   memory_house_data:
+  agent_layer_data:
+  agent_flightdeck_data:

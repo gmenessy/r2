@@ -79,13 +79,25 @@ def require(payload: dict[str, Any], *keys: str) -> None:
 
 
 class Request:
-    """Eingehende Anfrage: Methode, Pfad, Query-Parameter und Rohbody."""
+    """Eingehende Anfrage: Methode, Pfad, Query-Parameter, Header und Rohbody."""
 
-    def __init__(self, method: str, path: str, query: dict[str, str], raw_body: bytes) -> None:
+    def __init__(
+        self,
+        method: str,
+        path: str,
+        query: dict[str, str],
+        raw_body: bytes,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.method = method
         self.path = path
         self.query = query
         self._raw = raw_body
+        self._headers = {k.lower(): v for k, v in (headers or {}).items()}
+
+    def header(self, name: str) -> str | None:
+        """Header-Wert (case-insensitiv) oder ``None``."""
+        return self._headers.get(name.lower())
 
     def json(self) -> dict[str, Any]:
         try:
@@ -257,7 +269,8 @@ def serve(
                     )
                     return
                 raw = self.rfile.read(length)
-            response = app.dispatch(Request(method, url.path, query, raw))
+            headers = {k: v for k, v in self.headers.items()}
+            response = app.dispatch(Request(method, url.path, query, raw, headers))
             self._write(response)
             self._access(method, url.path, response.status, start)
 
