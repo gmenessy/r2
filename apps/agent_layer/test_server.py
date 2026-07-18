@@ -12,8 +12,10 @@ import pytest
 from brainfump import BrainFumpKernel
 from apps.agent_layer.billing import BillingLedger
 from apps.agent_layer.llm import ChatResult, ToolCall
+from apps.agent_layer.ratelimit import RateLimiter
 from apps.agent_layer.runtime import AgentRuntime
 from apps.agent_layer.server import create_server
+from apps.agent_layer.simllm import SimulatedLLM
 from apps.agent_layer.tools import builtin_registry
 from apps.agent_layer.xai import TraceStore
 
@@ -64,6 +66,14 @@ def _status_of(call) -> int:
     with pytest.raises(urllib.error.HTTPError) as excinfo:
         call()
     return excinfo.value.code
+
+
+def _error_of(call):
+    """Gibt (status, body, headers) einer erwarteten HTTP-Fehlerantwort zurück."""
+    with pytest.raises(urllib.error.HTTPError) as excinfo:
+        call()
+    err = excinfo.value
+    return err.code, json.loads(err.read()), err.headers
 
 
 def test_full_platform_roundtrip(api: str) -> None:
@@ -137,6 +147,49 @@ def test_trace_isolation_between_tenants(api: str) -> None:
     admin = _call(f"{api}/api/trace?run_id={run['run_id']}",
                   headers={"X-Admin-Token": ADMIN_TOKEN})
     assert admin["run_id"] == run["run_id"]
+
+
+def test_rate_limit_returns_429_with_retry_after() -> None:
+    """S3-4/O5: Über dem Limit antwortet /api/run mit 429 + Retry-After."""
+    kernel = BrainFumpKernel(None)
+    ledger = BillingLedger()
+    traces = TraceStore()
+    runtime = AgentRuntime(llm=SimulatedLLM(), registry=builtin_registry(kernel),
+                           traces=traces, kernel=kernel, ledger=ledger)
+    limiter = RateLimiter(per_minute=60, burst=2)  # zwei Runs frei, dann Sperre
+    server = create_server(runtime, ledger, traces, admin_token=ADMIN_TOKEN,
+                           host="127.0.0.1", port=0, rate_limiter=limiter)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        key = _call(f"{base}/api/keys", {"tenant": "acme", "budget_usd": 5.0},
+                    headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        assert _call(f"{base}/api/run", {"goal": "hi"}, headers={"X-API-Key": key})["status"]
+        assert _call(f"{base}/api/run", {"goal": "hi"}, headers={"X-API-Key": key})["status"]
+        status, body, headers = _error_of(
+            lambda: _call(f"{base}/api/run", {"goal": "hi"}, headers={"X-API-Key": key}))
+        assert status == 429
+        assert body["error"] == "rate limit exceeded" and body["retry_after_s"] > 0
+        assert int(headers["Retry-After"]) >= 1
+    finally:
+        server.shutdown()
+
+
+def test_key_rotation_endpoint(api: str) -> None:
+    """S3-4: /api/keys/rotate liefert einen neuen Key; der alte gilt weiter (Grace)."""
+    old = _call(f"{api}/api/keys", {"tenant": "acme", "budget_usd": 2.0},
+                headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+    rotated = _call(f"{api}/api/keys/rotate", {"grace_seconds": 120},
+                    headers={"X-API-Key": old})
+    new = rotated["api_key"]
+    assert new.startswith("agl_") and new != old
+    # Neuer Key funktioniert für /api/usage; Budget bleibt bei 2.0 (keine Verdopplung).
+    usage = _call(f"{api}/api/usage", headers={"X-API-Key": new})
+    assert usage["tenant"] == "acme" and usage["budget_usd"] == 2.0
+    # Rotation ohne gültigen Key → 401.
+    assert _status_of(lambda: _call(f"{api}/api/keys/rotate", {},
+                                    headers={"X-API-Key": "agl_fake"})) == 401
 
 
 def test_tools_and_health_endpoints(api: str) -> None:

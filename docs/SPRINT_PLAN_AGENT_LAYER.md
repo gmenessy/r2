@@ -10,6 +10,11 @@ _Stand: 2026-07-18 · Basis: `claude/agent-execution-layer-bju91q` nach Deep Div
 
 ---
 
+> **✅ Durchgeführt (2026-07-18).** Alle fünf Tickets abgeschlossen, 295 →
+> **316 Tests** grün, Coverage ~95,8 %, Reifegrad **3 → 4**. Abschlussbericht:
+> [`DEEP_DIVE_AGENT_LAYER.md`](DEEP_DIVE_AGENT_LAYER.md) Abschnitt 7. Status je
+> Ticket in der Backlog-Tabelle unten.
+
 ## 1. Sprint-Ziel (ein Satz)
 
 **Die Plattform von Reifegrad 3 („Definiert") auf Reifegrad 4 („Gemanagt")
@@ -28,13 +33,13 @@ Messbares Sprint-Ergebnis:
 
 ## 2. Backlog — priorisiert und nach Abhängigkeit sortiert
 
-| Ticket | O-Ref | Prio | Aufwand | Offline testbar | Beschreibung |
-|--------|:-----:|:----:|:-------:|:---------------:|--------------|
-| **S3-1 · Sandbox Privilege-Drop + Container-Hardening** | O1 | P1 | M | teilweise | Läuft der Server als root, droppt das Sandbox-Kind vor `fn()` auf `nobody` (`setgid`/`setuid`, `os.setgroups([])`); ist der Server bereits unprivilegiert, bleibt es dabei (dokumentierter No-op). Compose-Services bekommen `read_only: true`, `no-new-privileges`, `cap_drop: [ALL]`, `tmpfs` für Workdir. |
-| **S3-2 · Netz-Isolation als Deployment-Pflicht** | O2 | P1 | S | Doku/Config | Die Socket-Sperre bleibt Defense-in-Depth; harte Isolation wird über eine dedizierte `internal`-Compose-Netzwerktopologie erzwungen (Tool-Container ohne Egress, nur die Plattform erreicht vLLM). Als Betriebsanforderung in READMEs + Deploy-Checkliste verankert. |
-| **S3-3 · Budget-Reservierung (Pre-Auth + Settlement)** | O4 | P1 | M | ja | Vor dem LLM-Call wird `max_tokens` zum Höchstpreis **reserviert** (`reserve()`), nach dem Call auf die echten Tokens **abgerechnet** und die Differenz gutgeschrieben (`settle()`). Damit ist das „ein Call über Budget"-Fenster geschlossen; Reservierungen sind an die `run_id` gebunden und verfallen bei Abbruch. |
-| **S3-4 · Rate-Limits + Key-Lifecycle** | O5 | P2 | M | ja | Token-Bucket pro Tenant (Runs/Minute, konfigurierbar) → HTTP 429 mit `Retry-After`. API-Keys bekommen `expires_at` und einen `rotate()`-Pfad (neuer Key, alter mit Kulanzfenster gültig). Ablauf/Rotation im `resolve()`-Pfad geprüft. |
-| **S3-5 · Trace/Event-Retention** | O6 | P3 | S | ja | `TraceStore.prune(older_than_days)` und ein Retention-Hook (Alter + Kappung auf N jüngste Runs pro Tenant). Optionaler Start-Parameter `--retention-days`; Default aus (keine stille Löschung). |
+| Ticket | O-Ref | Prio | Aufwand | Status | Beschreibung |
+|--------|:-----:|:----:|:-------:|:------:|--------------|
+| **S3-1 · Sandbox Privilege-Drop + Container-Hardening** | O1 | P1 | M | ✅ | Läuft der Server als root, droppt das Sandbox-Kind vor `fn()` auf `nobody` (`setgroups([])`/`setgid`/`setuid`); ist der Server bereits unprivilegiert, bleibt es dabei (No-op, `dropped_privileges` im Report). Compose: `read_only`, `no-new-privileges`, `cap_drop: [ALL]` + `cap_add: [SETUID,SETGID]`, `tmpfs`. |
+| **S3-2 · Netz-Isolation als Deployment-Pflicht** | O2 | P1 | S | ✅ | `docker-compose.hardened.yml` (`internal`-Netz, vLLM innen, kein Egress); Betriebsanforderung + Verifikation in `docs/DEPLOY_HARDENING.md`. Socket-Sperre bleibt Defense-in-Depth. |
+| **S3-3 · Budget-Reservierung (Pre-Auth + Settlement)** | O4 | P1 | M | ✅ | Vor dem LLM-Call wird der Höchstpreis (`estimate_prompt_tokens` × `max_tokens`) **reserviert** (`reserve()`), danach auf die Ist-Tokens **abgerechnet** (`settle()`), bei Fehler **freigegeben** (`release()`). „Ein Call über Budget"-Fenster geschlossen. |
+| **S3-4 · Rate-Limits + Key-Lifecycle** | O5 | P2 | M | ✅ | Token-Bucket pro Tenant → HTTP 429 mit `Retry-After`. Keys mit `ttl_seconds` und `rotate_key()` (neuer Key, alter im Kulanzfenster gültig, keine Budget-Verdopplung); Ablauf im `resolve()`-Pfad geprüft. |
+| **S3-5 · Trace/Event-Retention** | O6 | P3 | S | ✅ | `TraceStore.prune(older_than_days, keep_last_n_per_tenant)`; Start-Parameter `--retention-days` / `AGENT_RETENTION_DAYS`; Default aus (keine stille Löschung). |
 
 **Kapazität:** fünf Tickets (2× S, 3× M) — realistisch für einen Sprint,
 gemessen an den fünf A-Tickets der Vorsprints. S3-1..S3-3 (alle P1) sind das

@@ -133,13 +133,32 @@ result = runtime.run("Prüfe die Rechnung …", tenant="acme", case_id="akte_1")
 
 | Route | Auth | Beschreibung |
 |---|---|---|
-| `POST /api/keys` | `X-Admin-Token` | API-Key für einen Tenant ausstellen (`budget_usd`) |
-| `POST /api/run` | `X-API-Key` | Agent-Run: `{goal, case_id?}` → Antwort, Kosten, run_id |
-| `GET /api/trace?run_id=` | — | vollständiger Schritt-Trace |
-| `GET /api/explain?run_id=` | — | verdichtete Begründung + Kosten-Breakdown |
+| `POST /api/keys` | `X-Admin-Token` | API-Key für einen Tenant ausstellen (`budget_usd`, optional `ttl_seconds`) |
+| `POST /api/keys/rotate` | `X-API-Key` | Eigenen Key rotieren; alter gilt im Kulanzfenster weiter (`grace_seconds`) |
+| `POST /api/run` | `X-API-Key` | Agent-Run: `{goal, case_id?}` → Antwort, Kosten, run_id (Rate-Limit → `429` + `Retry-After`) |
+| `GET /api/trace?run_id=` | `X-API-Key` / Admin | Schritt-Trace — nur eigener Tenant oder Admin |
+| `GET /api/explain?run_id=` | `X-API-Key` / Admin | Begründung + Kosten-Breakdown — nur eigener Tenant oder Admin |
 | `GET /api/usage` | `X-API-Key` | Verbrauch, Budget, Rest des eigenen Tenants |
 | `GET /api/tools` | — | registrierte Tools inkl. Sandbox-Limits |
 | `GET /api/health`, `GET /api/version` | — | Betrieb/Docker-Healthcheck |
+
+## Betrieb & Härtung (Sprint 3)
+
+Für den Betrieb mit nicht vollständig vertrauenswürdigen Tenants — Details und
+Verifikation in [`docs/DEPLOY_HARDENING.md`](../../docs/DEPLOY_HARDENING.md):
+
+- **Sandbox-Privilege-Drop:** Läuft der Container als root, droppt jeder
+  Tool-Aufruf auf `nobody` — Fremdcode erreicht die Plattform-Dateien nicht
+  (`dropped_privileges` im Sandbox-Report). Härtung in `docker-compose.yml`.
+- **Netz-Isolation:** Produktion via `docker-compose.hardened.yml`
+  (`internal`-Netz, vLLM innen, kein Egress).
+- **Budget-Reservierung:** Der Höchstpreis eines Calls wird vorab gebunden;
+  ein Call, der das Budget sprengen würde, läuft gar nicht erst — kein Overrun.
+- **Rate-Limits:** `--rate-per-minute` / `AGENT_RATE_PER_MINUTE` (Token-Bucket
+  je Tenant, `429` + `Retry-After`).
+- **Key-Lifecycle:** Ablauf (`ttl_seconds`) und Rotation mit Kulanzfenster.
+- **Retention:** `--retention-days` / `AGENT_RETENTION_DAYS` löscht alte Traces
+  beim Start (Default aus — keine stille Löschung).
 
 ## Performance-Entscheidungen
 

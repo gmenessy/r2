@@ -104,6 +104,33 @@ class TraceStore:
         }
 
     @locked
+    def prune(self, older_than_days: float | None = None,
+              keep_last_n_per_tenant: int | None = None) -> int:
+        """Alte Runs (samt Schritten) löschen — Retention gegen unbegrenztes
+        Wachstum (S3-3/O6). Zwei kombinierbare Kriterien:
+
+        - ``older_than_days``: alles vor dem Stichtag (nach ``started``).
+        - ``keep_last_n_per_tenant``: pro Tenant nur die N jüngsten Runs halten.
+
+        Gibt die Zahl gelöschter Runs zurück. Ohne Kriterium ein No-op."""
+        doomed: set[str] = set()
+        if older_than_days is not None:
+            cutoff = time.time() - older_than_days * 86400
+            doomed.update(r for (r,) in self._conn.execute(
+                "SELECT run_id FROM runs WHERE started < ?", (cutoff,)))
+        if keep_last_n_per_tenant is not None:
+            for (tenant,) in self._conn.execute("SELECT DISTINCT tenant FROM runs"):
+                doomed.update(r for (r,) in self._conn.execute(
+                    "SELECT run_id FROM runs WHERE tenant = ? ORDER BY started DESC"
+                    " LIMIT -1 OFFSET ?",
+                    (tenant, keep_last_n_per_tenant)))
+        for run_id in doomed:
+            self._conn.execute("DELETE FROM steps WHERE run_id = ?", (run_id,))
+            self._conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+        self._conn.commit()
+        return len(doomed)
+
+    @locked
     def recent(self, limit: int = 20) -> list[dict[str, Any]]:
         """Jüngste Runs (neueste zuerst) für Übersichten/UIs."""
         rows = self._conn.execute(

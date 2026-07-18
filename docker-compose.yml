@@ -63,6 +63,17 @@ services:
 
   # Agent Execution Layer — CPU-Container; das LLM (gemini4-31b via vLLM)
   # läuft als separater Dienst und wird über VLLM_BASE_URL erreicht.
+  #
+  # Härtung für nicht vertrauenswürdige Tenants (S3-1/S3-2, siehe
+  # docs/DEPLOY_HARDENING.md):
+  #  - Container startet als root, behält aber NUR SETUID/SETGID — genug, damit
+  #    die Sandbox Tool-Code auf 'nobody' droppt (O1), sonst keine Capabilities.
+  #  - read_only Root-FS + tmpfs für /tmp (die Sandbox-Workdirs); /data bleibt
+  #    über das Volume schreibbar.
+  #  - no-new-privileges verhindert Rechte-Eskalation über setuid-Binaries.
+  #  - Netz: nur im internen 'agent_backend'-Netz — kein Egress ins Internet;
+  #    vLLM MUSS im selben internen Netz laufen (O2). Tool-Code erbt diese
+  #    Isolation, die In-Prozess-Socket-Sperre ist zusätzliche Verteidigung.
   agent-layer:
     build:
       context: .
@@ -73,8 +84,21 @@ services:
       VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8000/v1}
       AGENT_MODEL: ${AGENT_MODEL:-gemini4-31b}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - agent_layer_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - agent_backend
     restart: unless-stopped
 
   # Agent Flightdeck — Demo-App + Schaufenster des Agent Execution Layer.
@@ -93,6 +117,15 @@ services:
     volumes:
       - agent_flightdeck_data:/data
     restart: unless-stopped
+
+networks:
+  # Gemeinsames Netz der Plattform. Im DEV-Default NICHT internal, damit ein
+  # extern laufender vLLM (VLLM_BASE_URL) erreichbar bleibt.
+  # PRODUKTION (S3-2/O2): via docker-compose.hardened.yml auf `internal: true`
+  # umstellen und vLLM als Service in DIESES Netz hängen — dann hat weder die
+  # Plattform noch Tool-Code Egress ins Internet. Siehe docs/DEPLOY_HARDENING.md.
+  agent_backend:
+    driver: bridge
 
 volumes:
   agentic_akte_data:

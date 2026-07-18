@@ -27,16 +27,18 @@ from http.server import ThreadingHTTPServer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from brainfump import BrainFumpKernel, __version__  # noqa: E402
-from brainfump.webkit import HttpError, Request, WebApp, require, serve  # noqa: E402
+from brainfump.webkit import HttpError, Request, WebApp, json_response, require, serve  # noqa: E402
 from apps.agent_layer.billing import BillingLedger  # noqa: E402
 from apps.agent_layer.llm import LLMError, VLLMClient  # noqa: E402
+from apps.agent_layer.ratelimit import RateLimiter  # noqa: E402
 from apps.agent_layer.runtime import AgentRuntime  # noqa: E402
 from apps.agent_layer.tools import builtin_registry  # noqa: E402
 from apps.agent_layer.xai import TraceStore  # noqa: E402
 
 
 def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
-              admin_token: str | None = None) -> WebApp:
+              admin_token: str | None = None,
+              rate_limiter: RateLimiter | None = None) -> WebApp:
     app = WebApp()
     app.health("agent-layer", __version__)
 
@@ -76,15 +78,37 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
             raise HttpError(503, "ADMIN_TOKEN not configured")
         if not _is_admin(request):
             raise HttpError(403, "invalid admin token")
-        api_key = ledger.create_key(body["tenant"], float(body.get("budget_usd", 10.0)))
+        ttl = body.get("ttl_seconds")
+        api_key = ledger.create_key(body["tenant"], float(body.get("budget_usd", 10.0)),
+                                    ttl_seconds=float(ttl) if ttl is not None else None)
         return {"tenant": body["tenant"], "api_key": api_key,
                 "budget_usd": float(body.get("budget_usd", 10.0))}
 
+    @app.post("/api/keys/rotate")
+    def _rotate(request: Request) -> dict:
+        """Eigenen Key rotieren: neuer Key, alter läuft im Kulanzfenster aus (S3-4)."""
+        api_key = request.header("x-api-key") or request.query.get("api_key")
+        if not api_key or ledger.resolve(api_key) is None:
+            raise HttpError(401, "missing or unknown API key")
+        grace = float(request.json().get("grace_seconds", 300.0))
+        new_key = ledger.rotate_key(api_key, grace_seconds=grace)
+        if new_key is None:
+            raise HttpError(401, "key no longer valid")
+        return {"api_key": new_key, "old_key_grace_seconds": grace}
+
     @app.post("/api/run")
-    def _run(request: Request) -> dict:
+    def _run(request: Request):
         body = request.json()
         require(body, "goal")
         tenant = _tenant(request)
+        if rate_limiter is not None:
+            allowed, retry_after = rate_limiter.acquire(tenant)
+            if not allowed:
+                # 429 mit Retry-After — der Client weiß, wann er es erneut darf.
+                return json_response(
+                    {"error": "rate limit exceeded", "retry_after_s": round(retry_after, 2)},
+                    429, headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+                )
         try:
             result = runtime.run(body["goal"], tenant=tenant, case_id=body.get("case_id"))
         except LLMError as exc:
@@ -116,8 +140,9 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
 
 def create_server(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
                   admin_token: str | None = None, host: str = "0.0.0.0",
-                  port: int = 8060) -> ThreadingHTTPServer:
-    return serve(build_app(runtime, ledger, traces, admin_token=admin_token),
+                  port: int = 8060, rate_limiter: RateLimiter | None = None) -> ThreadingHTTPServer:
+    return serve(build_app(runtime, ledger, traces, admin_token=admin_token,
+                           rate_limiter=rate_limiter),
                  host=host, port=port)
 
 
@@ -127,12 +152,21 @@ def main() -> None:  # pragma: no cover - manueller Einstiegspunkt
     parser = argparse.ArgumentParser(description="Agent Execution Layer")
     parser.add_argument("--data", default=os.environ.get("AGENT_DATA", "./data"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8060")))
+    parser.add_argument("--retention-days", type=float,
+                        default=float(os.environ.get("AGENT_RETENTION_DAYS", "0")) or None,
+                        help="Traces älter als N Tage beim Start löschen (0/leer = aus)")
+    parser.add_argument("--rate-per-minute", type=int,
+                        default=int(os.environ.get("AGENT_RATE_PER_MINUTE", "0")),
+                        help="Runs pro Minute je Tenant (0 = kein Limit)")
     args = parser.parse_args()
 
     os.makedirs(args.data, exist_ok=True)
     kernel = BrainFumpKernel(os.path.join(args.data, "memory"))
     ledger = BillingLedger(os.path.join(args.data, "billing.db"))
     traces = TraceStore(os.path.join(args.data, "traces.db"))
+    if args.retention_days:
+        removed = traces.prune(older_than_days=args.retention_days)
+        print(f"Retention: {removed} Runs älter als {args.retention_days} Tage entfernt")
     # AGENT_SIM=1 → deterministischer LLM-Ersatz: die komplette Plattform
     # läuft offline (Demo, Integrationstests, CI) — kein vLLM nötig.
     if os.environ.get("AGENT_SIM", "").lower() in ("1", "true", "yes"):
@@ -152,7 +186,9 @@ def main() -> None:  # pragma: no cover - manueller Einstiegspunkt
     if not os.environ.get("ADMIN_TOKEN"):
         print(f"ADMIN_TOKEN nicht gesetzt — generiert für diese Instanz: {admin_token}")
 
-    server = create_server(runtime, ledger, traces, admin_token=admin_token, port=args.port)
+    rate_limiter = RateLimiter(args.rate_per_minute) if args.rate_per_minute > 0 else None
+    server = create_server(runtime, ledger, traces, admin_token=admin_token, port=args.port,
+                           rate_limiter=rate_limiter)
     print(f"Agent Execution Layer auf http://0.0.0.0:{args.port} "
           f"(LLM: {runtime.llm.model} @ {runtime.llm.base_url}, Daten: {args.data})")
     server.serve_forever()

@@ -62,7 +62,8 @@ class BillingLedger:
                 tenant      TEXT NOT NULL,
                 budget_micro INTEGER NOT NULL,
                 created_at  REAL NOT NULL,
-                revoked     INTEGER NOT NULL DEFAULT 0
+                revoked     INTEGER NOT NULL DEFAULT 0,
+                expires_at  REAL
             );
             CREATE TABLE IF NOT EXISTS usage (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,29 +78,51 @@ class BillingLedger:
             );
             CREATE INDEX IF NOT EXISTS idx_usage_tenant ON usage(tenant);
             CREATE INDEX IF NOT EXISTS idx_usage_run ON usage(run_id);
+            CREATE TABLE IF NOT EXISTS reservations (
+                reservation_id TEXT PRIMARY KEY,
+                tenant       TEXT NOT NULL,
+                run_id       TEXT NOT NULL,
+                amount_micro INTEGER NOT NULL,
+                created_at   REAL NOT NULL,
+                released     INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_res_tenant ON reservations(tenant, released);
             """
         )
+        # Migration für Bestands-DBs, die vor S3-4 ohne expires_at angelegt wurden.
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(api_keys)")}
+        if "expires_at" not in cols:  # pragma: no cover - nur bei Alt-DBs
+            self._conn.execute("ALTER TABLE api_keys ADD COLUMN expires_at REAL")
         self._conn.commit()
 
     # -- Keys -----------------------------------------------------------------
 
     @locked
-    def create_key(self, tenant: str, budget_usd: float = 10.0) -> str:
+    def create_key(self, tenant: str, budget_usd: float = 10.0,
+                   ttl_seconds: float | None = None) -> str:
         api_key = f"agl_{secrets.token_urlsafe(24)}"
+        expires_at = time.time() + ttl_seconds if ttl_seconds is not None else None
         self._conn.execute(
-            "INSERT INTO api_keys (key_hash, tenant, budget_micro, created_at) VALUES (?,?,?,?)",
-            (_hash_key(api_key), tenant, int(budget_usd * MICRO_PER_USD), time.time()),
+            "INSERT INTO api_keys (key_hash, tenant, budget_micro, created_at, expires_at)"
+            " VALUES (?,?,?,?,?)",
+            (_hash_key(api_key), tenant, int(budget_usd * MICRO_PER_USD), time.time(), expires_at),
         )
         self._conn.commit()
         return api_key
 
     @locked
     def resolve(self, api_key: str) -> str | None:
+        """Tenant zu einem Key — nur wenn nicht widerrufen UND nicht abgelaufen (S3-4)."""
         row = self._conn.execute(
-            "SELECT tenant FROM api_keys WHERE key_hash = ? AND revoked = 0",
+            "SELECT tenant, expires_at FROM api_keys WHERE key_hash = ? AND revoked = 0",
             (_hash_key(api_key),),
         ).fetchone()
-        return row[0] if row else None
+        if row is None:
+            return None
+        tenant, expires_at = row
+        if expires_at is not None and expires_at <= time.time():
+            return None
+        return tenant
 
     @locked
     def revoke_key(self, api_key: str) -> bool:
@@ -109,6 +132,40 @@ class BillingLedger:
         self._conn.commit()
         return cursor.rowcount > 0
 
+    @locked
+    def rotate_key(self, api_key: str, grace_seconds: float = 300.0) -> str | None:
+        """Key rotieren: neuen Key für denselben Tenant/Budget ausstellen, den
+        alten nach einem Kulanzfenster ablaufen lassen (S3-4). ``None``, wenn
+        der alte Key unbekannt/bereits ungültig ist."""
+        row = self._conn.execute(
+            "SELECT tenant, budget_micro, expires_at FROM api_keys"
+            " WHERE key_hash = ? AND revoked = 0",
+            (_hash_key(api_key),),
+        ).fetchone()
+        if row is None:
+            return None
+        tenant, budget_micro, expires_at = row
+        now = time.time()
+        if expires_at is not None and expires_at <= now:
+            return None
+        new_key = f"agl_{secrets.token_urlsafe(24)}"
+        self._conn.execute(
+            "INSERT INTO api_keys (key_hash, tenant, budget_micro, created_at, expires_at)"
+            " VALUES (?,?,?,?,?)",
+            (_hash_key(new_key), tenant, budget_micro, now, None),
+        )
+        # Alten Key im Kulanzfenster auslaufen lassen (nicht sofort kappen) und
+        # sein Budget auf 0 setzen — sonst zählte der Tenant das Budget doppelt,
+        # solange beide Keys gültig sind.
+        grace_expiry = now + grace_seconds
+        new_expiry = grace_expiry if expires_at is None else min(grace_expiry, expires_at)
+        self._conn.execute(
+            "UPDATE api_keys SET expires_at = ?, budget_micro = 0 WHERE key_hash = ?",
+            (new_expiry, _hash_key(api_key)),
+        )
+        self._conn.commit()
+        return new_key
+
     # -- Buchungen ------------------------------------------------------------
 
     @locked
@@ -116,9 +173,80 @@ class BillingLedger:
         """Preflight: hat der Tenant noch Rest-Budget? (ohne Budget: ja).
 
         Verhindert, dass ein erschöpfter Tenant noch echte LLM-Kosten auslöst,
-        bevor die Buchung scheitert (Finding F3)."""
+        bevor die Buchung scheitert (Finding F3). Berücksichtigt offene
+        Reservierungen (S3-3)."""
         budget = self._budget(tenant)
-        return budget is None or self._spent(tenant) < budget
+        return budget is None or self._committed(tenant) < budget
+
+    # -- Reservierung (S3-3: Pre-Auth vor dem LLM-Call, Settlement danach) -----
+
+    @locked
+    def reserve(self, tenant: str, run_id: str, amount_micro: int) -> str:
+        """Höchstpreis eines anstehenden Calls vorab binden.
+
+        Schließt das „ein Call über Budget"-Fenster (O4): reicht das
+        Rest-Budget (abzüglich Verbrauch UND bereits offener Reservierungen)
+        nicht, wird der Call gar nicht erst ausgelöst. Gibt eine
+        Reservierungs-ID zurück, die :meth:`settle` oder :meth:`release`
+        wieder auflöst."""
+        budget = self._budget(tenant)
+        if budget is not None and self._committed(tenant) + amount_micro > budget:
+            raise BudgetExceededError(
+                f"tenant {tenant!r}: budget exhausted — reservation of "
+                f"{amount_micro / MICRO_PER_USD:.4f} USD exceeds remaining "
+                f"{(budget - self._committed(tenant)) / MICRO_PER_USD:.4f} USD"
+            )
+        reservation_id = f"res_{secrets.token_hex(8)}"
+        self._conn.execute(
+            "INSERT INTO reservations (reservation_id, tenant, run_id, amount_micro, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (reservation_id, tenant, run_id, max(0, amount_micro), time.time()),
+        )
+        self._conn.commit()
+        return reservation_id
+
+    @locked
+    def settle(self, reservation_id: str, tenant: str, run_id: str, prompt_tokens: int,
+               completion_tokens: int) -> int:
+        """Reservierung auflösen und die TATSÄCHLICHEN Kosten buchen.
+
+        Die Differenz zur Reservierung wird implizit gutgeschrieben (die
+        Reservierung verschwindet, nur der echte Verbrauch bleibt). Prüft das
+        Budget nicht erneut — der Call ist bereits erfolgt und muss verbucht
+        werden; die Reservierung hat den Rahmen zuvor garantiert."""
+        cost = self.prices.llm_cost(prompt_tokens, completion_tokens)
+        self._release(reservation_id)
+        self._conn.execute(
+            "INSERT INTO usage (ts, tenant, run_id, kind, units_in, units_out, cost_micro, detail)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (time.time(), tenant, run_id, "llm", prompt_tokens, completion_tokens, cost,
+             "chat_completion"),
+        )
+        self._conn.commit()
+        return cost
+
+    @locked
+    def release(self, reservation_id: str) -> None:
+        """Reservierung ohne Buchung freigeben (Abbruch/Fehler vor dem Call)."""
+        self._release(reservation_id)
+        self._conn.commit()
+
+    def _release(self, reservation_id: str) -> None:
+        self._conn.execute(
+            "UPDATE reservations SET released = 1 WHERE reservation_id = ?", (reservation_id,)
+        )
+
+    def _active_reservations(self, tenant: str) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(amount_micro), 0) FROM reservations"
+            " WHERE tenant = ? AND released = 0",
+            (tenant,),
+        ).fetchone()
+        return int(row[0])
+
+    def _committed(self, tenant: str) -> int:
+        """Verbindlich gebunden: verbucht + offen reserviert."""
+        return self._spent(tenant) + self._active_reservations(tenant)
 
     @locked
     def charge_llm(self, tenant: str, run_id: str, prompt_tokens: int,
@@ -137,10 +265,10 @@ class BillingLedger:
     def _charge(self, tenant: str, run_id: str, kind: str, units_in: int,
                 units_out: int, cost: int, detail: str) -> None:
         budget = self._budget(tenant)
-        if budget is not None and self._spent(tenant) + cost > budget:
+        if budget is not None and self._committed(tenant) + cost > budget:
             raise BudgetExceededError(
                 f"tenant {tenant!r}: budget exhausted "
-                f"({self._spent(tenant) / MICRO_PER_USD:.4f} of {budget / MICRO_PER_USD:.4f} USD)"
+                f"({self._committed(tenant) / MICRO_PER_USD:.4f} of {budget / MICRO_PER_USD:.4f} USD)"
             )
         self._conn.execute(
             "INSERT INTO usage (ts, tenant, run_id, kind, units_in, units_out, cost_micro, detail)"
@@ -151,7 +279,9 @@ class BillingLedger:
 
     def _budget(self, tenant: str) -> int | None:
         row = self._conn.execute(
-            "SELECT SUM(budget_micro) FROM api_keys WHERE tenant = ? AND revoked = 0", (tenant,)
+            "SELECT SUM(budget_micro) FROM api_keys WHERE tenant = ? AND revoked = 0"
+            " AND (expires_at IS NULL OR expires_at > ?)",
+            (tenant, time.time()),
         ).fetchone()
         return row[0] if row and row[0] is not None else None
 

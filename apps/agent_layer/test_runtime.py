@@ -195,6 +195,56 @@ def test_llm_error_finishes_trace_and_reports_status() -> None:
     assert "Abbruch durch LLM-Backend-Fehler" in " ".join(traces.explain(result.run_id)["narrative"])
 
 
+def test_reservation_closes_the_one_call_over_budget_window() -> None:
+    """S3-3/O4: Ein Call, dessen Höchstpreis das Restbudget sprengt, wird
+    reserviert-und-abgelehnt BEVOR das Backend läuft — kein Overrun mehr."""
+    ledger = BillingLedger()
+    # Budget deckt den has_budget-Preflight (kleiner Rest > 0), aber nicht die
+    # Reservierung des Höchstpreises (max_tokens * completion_rate).
+    ledger.create_key("tight", budget_usd=0.0001)  # 100 Mikro-USD
+    runtime, traces = _runtime([_answer("wäre teuer")], ledger=ledger)
+    result = runtime.run("frage", tenant="tight")
+    assert result.status == "budget_exceeded" and result.llm_calls == 0
+    assert runtime.llm.script  # Skript unangetastet → kein echter Call
+    assert any(s["kind"] == "budget_stop" for s in traces.trace(result.run_id)["steps"])
+    # Die abgelehnte Reservierung darf nichts binden.
+    assert ledger.usage("tight")["spent_usd"] == 0.0
+    assert ledger._active_reservations("tight") == 0
+
+
+def test_reservation_is_released_when_llm_call_fails() -> None:
+    """Ein LLM-Fehler nach der Reservierung gibt diese frei — kein Budget-Leck."""
+
+    class ExplodingLLM:
+        def chat(self, messages, tools=None, **_):
+            raise LLMError("backend down")
+
+    ledger = BillingLedger()
+    ledger.create_key("acme", budget_usd=1.0)
+    runtime = AgentRuntime(llm=ExplodingLLM(), registry=builtin_registry(),
+                           traces=TraceStore(), ledger=ledger)
+    result = runtime.run("frage", tenant="acme")
+    assert result.status == "llm_error"
+    assert ledger._active_reservations("acme") == 0  # freigegeben
+    assert ledger.usage("acme")["spent_usd"] == 0.0  # nichts verbucht
+
+
+def test_settled_run_bills_actual_not_ceiling() -> None:
+    """Nach settle steht nur der Ist-Verbrauch im Ledger, nicht der Höchstpreis."""
+    ledger = BillingLedger()
+    ledger.create_key("acme", budget_usd=5.0)
+    runtime, _ = _runtime([
+        _tool_call("calc", {"expression": "2+2"}),
+        _answer("4"),
+    ], ledger=ledger)
+    result = runtime.run("2+2?", tenant="acme")
+    assert result.status == "ok"
+    assert ledger._active_reservations("acme") == 0
+    # Kosten = tatsächliche LLM-Buchungen + Tool, weit unter den Reservierungen.
+    assert result.cost_usd == pytest.approx(ledger.run_cost(result.run_id)["total_usd"])
+    assert ledger.usage("acme")["spent_usd"] == pytest.approx(result.cost_usd)
+
+
 def test_budget_error_outside_runtime_still_raises() -> None:
     ledger = BillingLedger()
     ledger.create_key("t", budget_usd=0.0)

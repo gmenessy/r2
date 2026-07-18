@@ -110,16 +110,19 @@ class Request:
 
 
 class Response:
-    """Ausgehende Antwort mit fertig kodiertem Body."""
+    """Ausgehende Antwort mit fertig kodiertem Body und optionalen Headern."""
 
-    def __init__(self, body: bytes, content_type: str, status: int = 200) -> None:
+    def __init__(self, body: bytes, content_type: str, status: int = 200,
+                 headers: dict[str, str] | None = None) -> None:
         self.body = body
         self.content_type = content_type
         self.status = status
+        self.headers = headers or {}
 
 
-def json_response(data: Any, status: int = 200) -> Response:
-    return Response(json.dumps(data).encode(), "application/json", status)
+def json_response(data: Any, status: int = 200,
+                  headers: dict[str, str] | None = None) -> Response:
+    return Response(json.dumps(data).encode(), "application/json", status, headers)
 
 
 def text_response(
@@ -282,6 +285,8 @@ def serve(
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(response.body)))
+            for name, value in getattr(response, "headers", {}).items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(response.body)
 

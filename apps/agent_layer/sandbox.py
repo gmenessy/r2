@@ -52,6 +52,11 @@ class SandboxPolicy:
     max_open_files: int = 32
     max_output_bytes: int = 64 * 1024
     allow_network: bool = False
+    # S3-1/O1: Läuft der Serverprozess als root, droppt das Tool-Kind vor der
+    # Ausführung auf einen unprivilegierten Nutzer (nobody) — dann kann
+    # Fremdcode die Plattform-Dateien (z. B. /data/billing.db) nicht lesen.
+    # Ohne root ist es ein dokumentierter No-op.
+    drop_privileges: bool = True
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,7 @@ class SandboxResult:
     exit_reason: str = "ok"  # ok | error | timeout | killed | output_limit
     duration_ms: float = 0.0
     hardened: bool = True
+    dropped_privileges: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +77,7 @@ class SandboxResult:
             "exit_reason": self.exit_reason,
             "duration_ms": round(self.duration_ms, 2),
             "hardened": self.hardened,
+            "dropped_privileges": self.dropped_privileges,
         }
 
 
@@ -89,7 +96,23 @@ def _inherited_vmsize_bytes() -> int:
     return 0  # pragma: no cover - kein procfs
 
 
-def _harden_child(policy: SandboxPolicy, workdir: str) -> None:  # pragma: no cover - läuft im Kind
+def _would_drop(policy: SandboxPolicy) -> bool:
+    """Wird das Kind Privilegien droppen? Nur wenn gewünscht UND als root gestartet."""
+    getuid = getattr(os, "getuid", None)
+    return policy.drop_privileges and getuid is not None and getuid() == 0
+
+
+def _drop_to_nobody() -> None:  # pragma: no cover - benötigt root, nicht in CI
+    """Auf 'nobody' fallen: Gruppen leeren, dann GID, dann UID (Reihenfolge!)."""
+    import pwd
+
+    nobody = pwd.getpwnam("nobody")
+    os.setgroups([])
+    os.setgid(nobody.pw_gid)
+    os.setuid(nobody.pw_uid)
+
+
+def _harden_child(policy: SandboxPolicy, workdir: str) -> bool:  # pragma: no cover - läuft im Kind
     import resource
     import socket
 
@@ -101,7 +124,13 @@ def _harden_child(policy: SandboxPolicy, workdir: str) -> None:  # pragma: no co
     resource.setrlimit(resource.RLIMIT_NOFILE, (policy.max_open_files, policy.max_open_files))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
+    # Vor einem eventuellen UID-Drop das eigene Tempdir für den Zielnutzer
+    # beschreibbar machen (es gehört noch dem Servicenutzer, 0700).
+    will_drop = _would_drop(policy)
+    if will_drop:
+        os.chmod(workdir, 0o777)
     os.chdir(workdir)
+
     kept = {k: os.environ[k] for k in _KEPT_ENV if k in os.environ}
     os.environ.clear()
     os.environ.update(kept)
@@ -113,6 +142,12 @@ def _harden_child(policy: SandboxPolicy, workdir: str) -> None:  # pragma: no co
         socket.socket = _blocked  # type: ignore[misc,assignment]
         socket.create_connection = _blocked  # type: ignore[assignment]
 
+    # UID-Drop als LETZTES: danach sind keine privilegierten Schritte mehr
+    # möglich, und Fremdcode läuft ohne Zugriff auf Plattform-Dateien.
+    if will_drop:
+        _drop_to_nobody()
+    return will_drop
+
 
 def _child_main(
     conn: Any,
@@ -121,23 +156,27 @@ def _child_main(
     policy: SandboxPolicy,
     workdir: str,
 ) -> None:  # pragma: no cover - läuft im Kindprozess, nicht im Coverage-Prozess
+    dropped = False
     try:
-        _harden_child(policy, workdir)
+        dropped = _harden_child(policy, workdir)
         value = fn(**kwargs)
         encoded = json.dumps(value, ensure_ascii=False, default=str)
         if len(encoded.encode()) > policy.max_output_bytes:
             conn.send({"ok": False, "error": f"tool output exceeds {policy.max_output_bytes} bytes",
-                       "exit_reason": "output_limit"})
+                       "exit_reason": "output_limit", "dropped": dropped})
         else:
-            conn.send({"ok": True, "value": json.loads(encoded), "exit_reason": "ok"})
+            conn.send({"ok": True, "value": json.loads(encoded), "exit_reason": "ok",
+                       "dropped": dropped})
     except MemoryError:
-        conn.send({"ok": False, "error": "memory limit exceeded", "exit_reason": "killed"})
+        conn.send({"ok": False, "error": "memory limit exceeded", "exit_reason": "killed",
+                   "dropped": dropped})
     except BaseException as exc:  # noqa: BLE001 - Grenze der Sandbox, alles melden
         conn.send({
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",
             "exit_reason": "error",
             "trace": traceback.format_exc(limit=5),
+            "dropped": dropped,
         })
     finally:
         conn.close()
@@ -181,6 +220,7 @@ class ProcessSandbox:
             error=payload.get("error"),
             exit_reason=payload.get("exit_reason", "error"),
             duration_ms=duration_ms,
+            dropped_privileges=payload.get("dropped", False),
         )
 
     @staticmethod

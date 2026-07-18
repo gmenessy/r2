@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from apps.agent_layer.sandbox import ProcessSandbox, SandboxPolicy
+import os
+
+from apps.agent_layer.sandbox import ProcessSandbox, SandboxPolicy, _would_drop
 
 
 @pytest.fixture(scope="module")
@@ -105,3 +107,22 @@ def test_environment_is_scrubbed_and_cwd_isolated(sandbox: ProcessSandbox, monke
     assert result.ok
     assert result.value["has_secret"] is False
     assert "agent-tool-" in result.value["cwd"]
+
+
+def test_privilege_drop_guard_logic() -> None:
+    """S3-1/O1: Der UID-Drop greift NUR als root und nur wenn erlaubt.
+
+    Die CI läuft unprivilegiert — der reale Drop wird per Root-Container-Smoke
+    verifiziert (siehe README/Deploy-Checkliste). Hier zählt die Guard-Logik."""
+    is_root = getattr(os, "getuid", lambda: 1000)() == 0
+    assert _would_drop(SandboxPolicy()) is is_root
+    assert _would_drop(SandboxPolicy(drop_privileges=False)) is False
+
+
+def test_run_reports_privilege_drop_state(sandbox: ProcessSandbox) -> None:
+    result = sandbox.run(_ok_tool, {"x": 1, "y": 2})
+    assert result.ok
+    # Unprivilegiert (CI): kein Drop. Als root: True — beides konsistent zum Guard.
+    expected = getattr(os, "getuid", lambda: 1000)() == 0
+    assert result.dropped_privileges is expected
+    assert result.to_dict()["dropped_privileges"] is expected

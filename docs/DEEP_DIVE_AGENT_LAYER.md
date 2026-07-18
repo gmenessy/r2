@@ -37,18 +37,22 @@ zusätzlich als dauerhafte Regressionstests verankert.
 
 ---
 
-## 3. Bewusste, dokumentierte Grenzen (offen — Roadmap)
+## 3. Bewusste, dokumentierte Grenzen
 
-| ID | Bereich | Grenze | Empfehlung |
+> **Sprint 3 (2026-07-18)** hat O1, O2, O4, O5 und O6 geschlossen — siehe
+> [`SPRINT_PLAN_AGENT_LAYER.md`](SPRINT_PLAN_AGENT_LAYER.md) und den
+> Abschlussbericht in Abschnitt 7. Offen bleiben bewusst O3, O7, O8.
+
+| ID | Bereich | Grenze | Status |
 |---|---|---|---|
-| **O1** | Sandbox | Ressourcen-Isolation (rlimits, Timeout, Env-Scrubbing, Tempdir), aber **keine Dateisystem-/Privilegien-Isolation**: der Kindprozess läuft mit gleicher UID und kann z. B. `/data/billing.db` lesen | P1: bei Root-Start `setuid(nobody)` im Kind; mittelfristig Landlock/seccomp oder gVisor-Klasse; Container mit `read_only` + `no-new-privileges` betreiben |
-| **O2** | Sandbox | Egress-Sperre wirkt auf Bibliotheksebene (`socket`-Stub) — gegen *versehentlichen* Netzzugriff, durch bösartigen Code umgehbar (`ctypes`, Re-Import von `_socket`) | P1: harte Isolation über Container-Network-Policy; ist im README bereits als Betriebsanforderung dokumentiert |
-| **O3** | Skalierung | Ein-Prozess-Architektur: SQLite-Ledger/-Traces sind instanzlokal — **horizontal nicht skalierbar**; bei Mehrinstanz-Betrieb wären Budget-Checks racy | P2: gemeinsamer Store (Postgres/Litestream) oder Sticky-Tenant-Sharding |
-| **O4** | Billing | Teilgedecktes Budget kann um **maximal einen LLM-Call** überzogen werden (Buchung nach dem Call; F3 deckt nur den Null-Rest-Fall) | P2: Reservierung (`max_tokens`-basierte Vorab-Buchung, Differenz-Gutschrift) |
-| **O5** | Billing/API | Keine Rate-Limits pro Zeitfenster, keine Key-Rotation/-Ablauf | P2 |
-| **O6** | xAI | Traces/Events wachsen unbegrenzt (keine Retention) | P3: TTL-Pruning-Job, Konsolidierung existiert kernelseitig bereits |
-| **O7** | Performance | Synchrones Request-Handling: lange LLM-Runs binden je einen Worker-Thread | P3: Job-Queue + `GET /api/runs/{id}`-Polling oder SSE-Streaming |
-| **O8** | Tools | `validate_args` prüft Pflichtfelder + Basistypen, keine verschachtelten Schemata | P3, bewusster Lightweight-Trade-off |
+| **O1** | Sandbox | Fehlende Privilegien-/Dateisystem-Isolation (Kind mit gleicher UID) | ✅ **S3-1:** Root-Start → `setgroups/setgid/setuid(nobody)` vor `fn()`; `read_only`+`cap_drop`+`no-new-privileges` in Compose |
+| **O2** | Sandbox | Egress-Sperre nur auf Bibliotheksebene, durch Fremdcode umgehbar | ✅ **S3-2:** `internal`-Netz ohne Egress (`docker-compose.hardened.yml`), vLLM innen; als Deploy-Pflicht in `DEPLOY_HARDENING.md` |
+| **O4** | Billing | Budget um max. einen LLM-Call überziehbar | ✅ **S3-3:** `reserve()` bindet den Höchstpreis vor dem Call, `settle()` bucht die Ist-Kosten — Fenster geschlossen |
+| **O5** | Billing/API | Keine Rate-Limits, keine Key-Rotation/-Ablauf | ✅ **S3-4:** Token-Bucket je Tenant (`429`+`Retry-After`), `ttl_seconds` + `rotate_key` mit Kulanzfenster |
+| **O6** | xAI | Traces/Events wachsen unbegrenzt | ✅ **S3-5:** `TraceStore.prune()` (Alter + N-jüngste/Tenant), `--retention-days` beim Start |
+| **O3** | Skalierung | Ein-Prozess/SQLite — horizontal nicht skalierbar | ⏳ offen (Sprint 4): gemeinsamer Store; offline nicht testbar, Naht vorbereitet |
+| **O7** | Performance | Synchrones Handling — lange Runs binden einen Thread | ⏳ offen (Sprint 4): Job-Queue + Polling/SSE |
+| **O8** | Tools | `validate_args` ohne verschachtelte Schemata | ⏳ offen (P3): bewusster Lightweight-Trade-off |
 
 ---
 
@@ -77,30 +81,52 @@ Modell: 5 Stufen — **1 Initial** (ad hoc), **2 Wiederholbar** (läuft, Lücken
 bekannt), **3 Definiert** (dokumentiert, getestet, Grenzen explizit),
 **4 Gemanagt** (messbar, mandantenfest, betriebsbewährt), **5 Optimiert**.
 
-| Dimension | Grad | Begründung (nach den Fixes dieses Reviews) |
-|---|:---:|---|
-| Funktionalität (Agent-Loop, Tools, Memory-Integration) | **3** | ReAct-Loop mit Gate, Schema-Validierung, Lern-Rückfluss; kein Streaming, keine parallelen Tool-Calls |
-| Sicherheit & Sandboxing | **3** | Mandanten-Isolation der API (F1), Gate-Bypass geschlossen (F4), rlimits/Timeout/Env-Scrubbing; Isolationstiefe begrenzt (O1/O2) |
-| Mandantenfähigkeit & Billing | **3** | Gehashte Keys, Ganzzahl-Ledger, Budget-Preflight (F3), Ceiling (F8); keine Reservierung/Quotas (O4/O5) |
-| Observability & xAI | **3–4** | Lückenlose Traces inkl. Fehlerpfaden (F7), Explain-Narrativ, Kosten-Breakdown pro Run; keine Retention/Metrics-Endpoint (O6) |
-| Zuverlässigkeit & Skalierung | **2** | Ein Prozess, SQLite, synchron (O3/O7) — für Pilot ausreichend, kein HA |
-| Testbarkeit & CI | **4** | 295 Tests, Branch-Coverage-Gate ~95 %, SimulatedLLM macht E2E offline/deterministisch, Findings als Regressionstests |
-| Doku & Developer Experience | **4** | Paper-referenzierte READMEs, API-Tabellen, Demo-App zeigt App-Bau in ~60 Zeilen, Flightdeck macht Verhalten sichtbar |
-| Betrieb & Deployment | **3** | Docker + Compose, Healthchecks, Volumes, Env-Konfiguration; kein Metrics-/Alerting-Pfad |
+Die Matrix zeigt zwei Stände: **nach dem Deep Dive** (Findings F1–F8 behoben)
+und **nach Sprint 3** (O1/O2/O4/O5/O6 geschlossen).
 
-**Gesamt: Reifegrad 3 — „Definiert".**
-Empfohlene Einsatzstufe *heute*: interne Piloten, Demos, App-Prototyping
-(API-first, das erklärte Plattformziel). **Gate für Produktion mit externen
-Tenants:** O1 + O2 (Isolationstiefe), O3 (gemeinsamer Store), O4/O5
-(Billing-Härtung) — damit wäre Grad 4 erreichbar.
+| Dimension | Deep Dive | Nach Sprint 3 | Begründung (Sprint-3-Stand) |
+|---|:---:|:---:|---|
+| Funktionalität (Agent-Loop, Tools, Memory) | 3 | **3** | ReAct-Loop mit Gate, Schema-Validierung, Lern-Rückfluss; kein Streaming, keine parallelen Tool-Calls (O7/O8) |
+| Sicherheit & Sandboxing | 3 | **4** | + Privilege-Drop auf `nobody` (S3-1), erzwungene Netz-Isolation (S3-2) zusätzlich zu API-Isolation (F1) und Gate (F4) |
+| Mandantenfähigkeit & Billing | 3 | **4** | + Budget-Reservierung (S3-3), Rate-Limits + Key-Ablauf/-Rotation (S3-4) auf gehashtem Ganzzahl-Ledger |
+| Observability & xAI | 3–4 | **4** | + Retention (S3-5) schließt O6; lückenlose Traces inkl. Fehlerpfaden, Explain, Kosten-Breakdown |
+| Zuverlässigkeit & Skalierung | 2 | **2** | unverändert — ein Prozess, SQLite, synchron (O3/O7 bewusst Sprint 4) |
+| Testbarkeit & CI | 4 | **4** | 316 Tests, Branch-Coverage-Gate ~95,8 %, SimulatedLLM für offline-E2E, jedes Ticket als Regressionstest |
+| Doku & Developer Experience | 4 | **4** | + `DEPLOY_HARDENING.md`, Härtungs-Override; Demo-App + Flightdeck unverändert stark |
+| Betrieb & Deployment | 3 | **4** | + gehärteter Compose (read_only/caps/no-new-privileges), Deploy-Checkliste, Retention/Rate-Limit-Schalter |
+
+**Gesamt nach Sprint 3: Reifegrad 4 — „Gemanagt" für den Ein-Instanz-Betrieb
+mit externen Tenants.** Die einzige Dimension unter Grad 4 ist Skalierung
+(Grad 2) — der Weg zu Grad 5 (horizontale Skalierung, Streaming) ist Sprint 4
+(O3, O7).
 
 ---
 
 ## 6. Prioritäten
 
-1. **P1 (vor externem Betrieb):** Privilege-Drop im Sandbox-Kind (O1),
-   Netzwerk-Isolation als Deployment-Pflicht dokumentiert erzwingen (O2).
-2. **P2 (Wachstum):** Budget-Reservierung (O4), Rate-Limits/Key-Rotation (O5),
-   gemeinsamer Store für Mehrinstanz (O3).
-3. **P3 (Komfort):** Trace-Retention (O6), asynchrone Runs/Streaming (O7),
-   tiefere Schema-Validierung (O8).
+1. ~~**P1 (vor externem Betrieb):** Privilege-Drop (O1), Netz-Isolation (O2).~~
+   ✅ Sprint 3 (S3-1, S3-2).
+2. ~~**P2 (Wachstum):** Budget-Reservierung (O4), Rate-Limits/Key-Rotation (O5).~~
+   ✅ Sprint 3 (S3-3, S3-4). Gemeinsamer Store (O3) bleibt offen (Sprint 4).
+3. **P3 (Komfort):** ~~Trace-Retention (O6)~~ ✅ (S3-5); asynchrone
+   Runs/Streaming (O7), tiefere Schema-Validierung (O8) → offen.
+
+---
+
+## 7. Sprint-3-Abschlussbericht (2026-07-18)
+
+Umgesetzt nach dem Plan aus `SPRINT_PLAN_AGENT_LAYER.md`, Reihenfolge nach
+Abhängigkeit (S3-3 zuerst, da es die Billing-Sequenz umbaut).
+
+| Ticket | Deliverable | Verifikation |
+|---|---|---|
+| **S3-3** (O4) | `BillingLedger.reserve/settle/release`; Runtime bindet den Höchstpreis (`estimate_prompt_tokens` × `max_tokens`) vor jedem LLM-Call, rechnet danach auf Ist-Kosten ab, gibt bei Fehler frei | Repro „ein Call über Budget" vor/nach; Reservierungs-Lebenszyklus, Freigabe bei `llm_error`, keine Ist-Überbuchung als Regressionstests |
+| **S3-1** (O1) | Sandbox droppt bei Root-Start auf `nobody` (setgroups→setgid→setuid, Workdir vorher beschreibbar); `dropped_privileges` im Report; Compose gehärtet | Guard-Logik unit-getestet (CI unprivilegiert); realer Drop als dokumentierter Root-Container-Smoke |
+| **S3-2** (O2) | `docker-compose.hardened.yml` (`internal`-Netz, vLLM innen); `DEPLOY_HARDENING.md` mit Checkliste; Härtung im Standard-Compose | Beide Compose-Configs validiert (`config -q`) |
+| **S3-4** (O5) | `RateLimiter` (Token-Bucket/Tenant), `429`+`Retry-After`; Key-`ttl_seconds` + `rotate_key` (Kulanzfenster, keine Budget-Verdopplung) | Limiter mit injizierter Uhr; Key-Ablauf/Rotation; Live-Smoke: `429`/`Retry-After: 30`, Rotation ohne Verdopplung |
+| **S3-5** (O6) | `TraceStore.prune()` (Alter + N-jüngste/Tenant); `--retention-days` beim Start | Prune nach Alter/pro-Tenant/No-op als Tests |
+
+**Ergebnis:** 295 → **316 Tests** grün, Branch-Coverage **~95,8 %**, pyflakes
+sauber. Reifegrad **3 → 4** in Sicherheit, Billing, Observability und Betrieb.
+Bewusst offen (radikaler Realismus): O3 (Postgres — offline nicht testbar),
+O7 (Streaming), O8 (Schema-Tiefe) → Sprint 4.

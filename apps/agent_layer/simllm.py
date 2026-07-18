@@ -24,15 +24,11 @@ import json
 import re
 from typing import Any
 
-from apps.agent_layer.llm import ChatResult, ToolCall
+from apps.agent_layer.llm import ChatResult, ToolCall, estimate_prompt_tokens, estimate_tokens
 
 _DIRECTIVE = re.compile(r"\[tool:(\w+)\s*(\{.*?\})?\]", re.DOTALL)
 _ANSWER = re.compile(r"\[answer:(.+?)\]", re.DOTALL)
 _ARITH_RUN = re.compile(r"[0-9+\-*/(),.\s]+")
-
-
-def _estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
 
 
 class SimulatedLLM:
@@ -49,7 +45,7 @@ class SimulatedLLM:
         max_tokens: int = 1024,
     ) -> ChatResult:
         goal = next((m["content"] for m in messages if m["role"] == "user"), "")
-        prompt_tokens = sum(_estimate_tokens(str(m.get("content") or "")) for m in messages)
+        prompt_tokens = estimate_prompt_tokens(messages)
 
         directives = self._directives(goal)
         done = sum(1 for m in messages if m["role"] == "tool")
@@ -68,7 +64,7 @@ class SimulatedLLM:
         return ChatResult(
             content=answer,
             prompt_tokens=prompt_tokens,
-            completion_tokens=_estimate_tokens(answer),
+            completion_tokens=estimate_tokens(answer),
             latency_ms=1.0,
         )
 

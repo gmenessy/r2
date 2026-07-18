@@ -1,0 +1,35 @@
+# Produktions-Override für den Agent Execution Layer (S3-2 / Deep-Dive O2).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d agent-layer vllm
+#
+# Wirkung:
+#  - Das Backend-Netz wird `internal: true` → KEIN Egress ins Internet, weder
+#    für die Plattform noch für geforkten Tool-Code.
+#  - vLLM läuft als Service IN diesem Netz, sodass die Plattform das Modell
+#    weiterhin erreicht (interner DNS-Name `vllm`), ohne Außenverbindung.
+#  - Die API bleibt über den veröffentlichten Port erreichbar (Ingress-NAT ist
+#    vom internal-Flag unberührt); für echten Betrieb einen Reverse-Proxy
+#    davorsetzen und TLS terminieren.
+#
+# Die Container-Härtung (read_only, cap_drop, no-new-privileges, tmpfs) steckt
+# bereits in docker-compose.yml und gilt damit auch hier.
+
+networks:
+  agent_backend:
+    internal: true
+
+services:
+  agent-layer:
+    environment:
+      # Muss auf den internen vLLM-Service zeigen.
+      VLLM_BASE_URL: http://vllm:8000/v1
+
+  # Platzhalter — durch das reale vLLM-Image/Setup für gemini4-31b ersetzen.
+  # Wichtig: NUR am internen Netz, keine `ports:` nach außen.
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    command: ["--model", "${AGENT_MODEL:-gemini4-31b}", "--port", "8000"]
+    networks:
+      - agent_backend
+    restart: unless-stopped
+    # GPU-Ressourcen nach Bedarf; auf CPU-only-Backends entsprechend anpassen.

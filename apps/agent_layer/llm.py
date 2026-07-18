@@ -30,6 +30,18 @@ class LLMError(Exception):
     """Kommunikations- oder Protokollfehler gegenüber dem LLM-Backend."""
 
 
+def estimate_tokens(text: str) -> int:
+    """Grobe, backend-unabhängige Token-Schätzung (~4 Zeichen/Token).
+
+    Dient der Billing-Reservierung (S3-3), bevor das Backend die echten
+    Zahlen liefert — konservativ genug, um das Budget vorab zu binden."""
+    return max(1, len(text) // 4)
+
+
+def estimate_prompt_tokens(messages: list[dict[str, Any]]) -> int:
+    return sum(estimate_tokens(str(message.get("content") or "")) for message in messages)
+
+
 @dataclass(frozen=True)
 class ToolCall:
     call_id: str

@@ -54,6 +54,50 @@ def test_explain_condenses_causal_chain() -> None:
     assert "2 LLM-Schritte" in narrative
 
 
+def test_prune_by_age_removes_old_runs_and_steps() -> None:
+    """S3-5/O6: Runs vor dem Stichtag verschwinden samt Schritten."""
+    import time as _time
+
+    traces = TraceStore()
+    _seed_run(traces, "run_old")
+    # Ein altes Startdatum erzwingen.
+    traces._conn.execute("UPDATE runs SET started = ? WHERE run_id = 'run_old'",
+                         (_time.time() - 40 * 86400,))
+    traces._conn.commit()
+    _seed_run(traces, "run_fresh")
+
+    removed = traces.prune(older_than_days=30)
+    assert removed == 1
+    assert traces.trace("run_old") is None
+    assert traces.trace("run_fresh") is not None
+    # Schritte des alten Runs sind ebenfalls weg.
+    leftover = traces._conn.execute(
+        "SELECT COUNT(*) FROM steps WHERE run_id = 'run_old'").fetchone()[0]
+    assert leftover == 0
+
+
+def test_prune_keeps_last_n_per_tenant() -> None:
+    traces = TraceStore()
+    for i in range(5):
+        traces.begin(f"run_{i}", "acme", f"ziel {i}")
+        traces.finish(f"run_{i}", "ok", "x")
+    traces.begin("run_other", "rival", "z")
+    traces.finish("run_other", "ok", "x")
+
+    removed = traces.prune(keep_last_n_per_tenant=2)
+    assert removed == 3  # acme: 5→2, rival: 1→1 (unberührt)
+    acme_left = [r["run_id"] for r in traces.recent(limit=10) if r["tenant"] == "acme"]
+    assert len(acme_left) == 2
+    assert traces.trace("run_other") is not None
+
+
+def test_prune_without_criteria_is_noop() -> None:
+    traces = TraceStore()
+    _seed_run(traces)
+    assert traces.prune() == 0
+    assert traces.trace("run_abc") is not None
+
+
 def test_explain_reports_budget_stop() -> None:
     traces = TraceStore()
     traces.begin("run_b", "tiny", "teuer")

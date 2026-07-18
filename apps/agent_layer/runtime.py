@@ -22,7 +22,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from apps.agent_layer.billing import BillingLedger, BudgetExceededError
-from apps.agent_layer.llm import ChatResult, LLMError, ToolCall, VLLMClient
+from apps.agent_layer.llm import (
+    ChatResult,
+    LLMError,
+    ToolCall,
+    VLLMClient,
+    estimate_prompt_tokens,
+)
 from apps.agent_layer.sandbox import ProcessSandbox
 from apps.agent_layer.tools import ToolRegistry, ToolSpec, validate_args
 from apps.agent_layer.xai import TraceStore
@@ -66,6 +72,7 @@ class AgentRuntime:
         sandbox: ProcessSandbox | None = None,
         max_steps: int = 6,
         memory_k: int = 3,
+        max_tokens: int = 1024,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     ) -> None:
         self.llm = llm
@@ -76,6 +83,7 @@ class AgentRuntime:
         self.sandbox = sandbox or ProcessSandbox()
         self.max_steps = max_steps
         self.memory_k = memory_k
+        self.max_tokens = max_tokens
         self.system_prompt = system_prompt
 
     # -- Öffentliche API ------------------------------------------------------
@@ -154,11 +162,24 @@ class AgentRuntime:
 
     def _llm_step(self, run_id: str, tenant: str, messages: list[dict[str, Any]]) -> ChatResult:
         tools = self.registry.openai_tools()
-        result = self.llm.chat(messages, tools=tools or None)
-        cost = 0
+        # S3-3: Höchstpreis dieses Calls VOR der Ausführung binden. reserve()
+        # wirft BudgetExceededError, wenn der Rahmen nicht reicht — dann läuft
+        # gar kein echter Call. Nach der Antwort auf die Ist-Kosten abrechnen
+        # (settle) bzw. bei Fehler freigeben (release).
+        reservation: str | None = None
         if self.ledger is not None:
-            cost = self.ledger.charge_llm(tenant, run_id, result.prompt_tokens,
-                                          result.completion_tokens)
+            ceiling = self.ledger.prices.llm_cost(estimate_prompt_tokens(messages), self.max_tokens)
+            reservation = self.ledger.reserve(tenant, run_id, ceiling)
+        try:
+            result = self.llm.chat(messages, tools=tools or None, max_tokens=self.max_tokens)
+        except BaseException:
+            if reservation is not None:
+                self.ledger.release(reservation)
+            raise
+        cost = 0
+        if self.ledger is not None and reservation is not None:
+            cost = self.ledger.settle(reservation, tenant, run_id, result.prompt_tokens,
+                                      result.completion_tokens)
         self.traces.step(run_id, "llm_call", {
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
