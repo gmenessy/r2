@@ -118,6 +118,14 @@ class VLLMClient:
         for attempt in range(self.retries + 1):
             try:
                 return self._transport(url, payload, headers, self.timeout)
+            except urllib.error.HTTPError as exc:
+                # 4xx ist deterministisch (kaputte Anfrage, Auth) — ein Retry
+                # mit identischem Payload kann nie gelingen (Finding F6).
+                if exc.code < 500:
+                    raise LLMError(f"LLM backend rejected request: {exc.code} {exc.reason}")
+                last_error = exc
+                if attempt < self.retries:
+                    time.sleep(min(2.0 ** attempt * 0.5, 4.0))
             except (urllib.error.URLError, OSError, TimeoutError) as exc:
                 last_error = exc
                 if attempt < self.retries:

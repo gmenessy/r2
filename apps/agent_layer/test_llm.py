@@ -84,6 +84,24 @@ def test_persistent_error_raises_llm_error(monkeypatch) -> None:
         _client(transport).chat([{"role": "user", "content": "hi"}])
 
 
+def test_http_4xx_is_not_retried(monkeypatch) -> None:
+    """F6: Deterministische Client-Fehler sofort melden statt sinnlos wiederholen."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    error = urllib.error.HTTPError("u", 400, "Bad Request", hdrs=None, fp=None)
+    transport = RecordingTransport([error, _completion()])
+    with pytest.raises(LLMError, match="rejected request: 400"):
+        _client(transport).chat([{"role": "user", "content": "hi"}])
+    assert len(transport.calls) == 1  # kein zweiter Versuch
+
+
+def test_http_5xx_is_retried(monkeypatch) -> None:
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    error = urllib.error.HTTPError("u", 503, "Unavailable", hdrs=None, fp=None)
+    transport = RecordingTransport([error, _completion()])
+    result = _client(transport).chat([{"role": "user", "content": "hi"}])
+    assert result.content == "Hallo" and len(transport.calls) == 2
+
+
 def test_malformed_response_raises_llm_error() -> None:
     transport = RecordingTransport([{"choices": []}])
     with pytest.raises(LLMError, match="malformed"):

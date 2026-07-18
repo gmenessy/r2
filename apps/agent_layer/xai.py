@@ -151,6 +151,8 @@ class TraceStore:
                 )
             elif step["kind"] == "budget_stop":
                 narrative.append(f"Abbruch durch Billing: {payload.get('reason')}")
+            elif step["kind"] == "llm_error":
+                narrative.append(f"Abbruch durch LLM-Backend-Fehler: {payload.get('error')}")
 
         narrative.append(
             f"{llm_calls} LLM-Schritte ({prompt_tokens} Prompt-/"

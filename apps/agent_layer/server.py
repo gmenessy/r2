@@ -3,8 +3,8 @@
 Routen:
     POST /api/keys                API-Key ausstellen (X-Admin-Token)
     POST /api/run                 Agent-Run starten (X-API-Key)
-    GET  /api/trace?run_id=       vollständiger xAI-Trace eines Runs
-    GET  /api/explain?run_id=     verdichtete Begründung (Memory/Tools/Kosten)
+    GET  /api/trace?run_id=       xAI-Trace — nur eigener Tenant oder Admin
+    GET  /api/explain?run_id=     Begründung + Kosten — nur eigener Tenant oder Admin
     GET  /api/usage               Verbrauch + Budget des eigenen Tenants (X-API-Key)
     GET  /api/tools               registrierte Tools inkl. Sandbox-Limits
     GET  /api/health, /api/version
@@ -18,6 +18,7 @@ Konfiguration (Umgebung):
 
 from __future__ import annotations
 
+import hmac
 import os
 import sys
 import uuid
@@ -46,13 +47,34 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
             raise HttpError(401, "missing or unknown API key")
         return tenant
 
+    def _is_admin(request: Request) -> bool:
+        supplied = request.header("x-admin-token")
+        # hmac.compare_digest: konstante Laufzeit gegen Timing-Angriffe (F5).
+        return (admin_token is not None and supplied is not None
+                and hmac.compare_digest(supplied, admin_token))
+
+    def _authorized_trace(request: Request) -> dict:
+        """Trace laden und Zugriff prüfen: eigener Tenant oder Admin (F1) —
+        Traces enthalten Ziele, Tool-Argumente und Memory-Inhalte."""
+        run_id = request.query.get("run_id")
+        if not run_id:
+            raise HttpError(400, "missing query parameter: run_id")
+        trace = traces.trace(run_id)
+        if not _is_admin(request):
+            tenant = _tenant(request)  # 401 ohne gültigen Key — auch für unbekannte Runs
+            if trace is not None and trace["tenant"] != tenant:
+                raise HttpError(403, "run belongs to another tenant")
+        if trace is None:
+            raise HttpError(404, f"unknown run: {run_id}")
+        return trace
+
     @app.post("/api/keys")
     def _keys(request: Request) -> dict:
         body = request.json()
         require(body, "tenant")
         if admin_token is None:
             raise HttpError(503, "ADMIN_TOKEN not configured")
-        if request.header("x-admin-token") != admin_token:
+        if not _is_admin(request):
             raise HttpError(403, "invalid admin token")
         api_key = ledger.create_key(body["tenant"], float(body.get("budget_usd", 10.0)))
         return {"tenant": body["tenant"], "api_key": api_key,
@@ -71,23 +93,13 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
 
     @app.get("/api/trace")
     def _trace(request: Request) -> dict:
-        run_id = request.query.get("run_id")
-        if not run_id:
-            raise HttpError(400, "missing query parameter: run_id")
-        trace = traces.trace(run_id)
-        if trace is None:
-            raise HttpError(404, f"unknown run: {run_id}")
-        return trace
+        return _authorized_trace(request)
 
     @app.get("/api/explain")
     def _explain(request: Request) -> dict:
-        run_id = request.query.get("run_id")
-        if not run_id:
-            raise HttpError(400, "missing query parameter: run_id")
-        explanation = traces.explain(run_id)
-        if explanation is None:
-            raise HttpError(404, f"unknown run: {run_id}")
-        explanation["cost"] = ledger.run_cost(run_id)
+        trace = _authorized_trace(request)
+        explanation = traces.explain(trace["run_id"])
+        explanation["cost"] = ledger.run_cost(trace["run_id"])
         return explanation
 
     @app.get("/api/usage")

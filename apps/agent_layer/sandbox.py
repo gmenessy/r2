@@ -37,7 +37,13 @@ _MIB = 1024 * 1024
 
 @dataclass(frozen=True)
 class SandboxPolicy:
-    """Ressourcen-Budget eines einzelnen Tool-Aufrufs."""
+    """Ressourcen-Budget eines einzelnen Tool-Aufrufs.
+
+    ``memory_bytes`` ist der zusätzliche Adressraum, den das Tool über den
+    per Fork geerbten Parent-Speicher hinaus belegen darf: ``RLIMIT_AS`` misst
+    den gesamten Adressraum, ein absolutes Limit würde harmlose Tools killen,
+    sobald der Serverprozess selbst groß ist (Deep-Dive-Finding F2).
+    """
 
     wall_timeout_s: float = 10.0
     cpu_seconds: int = 5
@@ -71,12 +77,26 @@ class SandboxResult:
 _KEPT_ENV = ("PATH", "LANG", "TZ")
 
 
+def _inherited_vmsize_bytes() -> int:
+    """Aktueller virtueller Adressraum (Linux); 0, wenn nicht bestimmbar."""
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmSize:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):  # pragma: no cover - kein procfs
+        pass
+    return 0  # pragma: no cover - kein procfs
+
+
 def _harden_child(policy: SandboxPolicy, workdir: str) -> None:  # pragma: no cover - läuft im Kind
     import resource
     import socket
 
     resource.setrlimit(resource.RLIMIT_CPU, (policy.cpu_seconds, policy.cpu_seconds + 1))
-    resource.setrlimit(resource.RLIMIT_AS, (policy.memory_bytes, policy.memory_bytes))
+    # Limit relativ zum geerbten Adressraum: memory_bytes = Spielraum des Tools.
+    memory_cap = _inherited_vmsize_bytes() + policy.memory_bytes
+    resource.setrlimit(resource.RLIMIT_AS, (memory_cap, memory_cap))
     resource.setrlimit(resource.RLIMIT_FSIZE, (policy.max_file_bytes, policy.max_file_bytes))
     resource.setrlimit(resource.RLIMIT_NOFILE, (policy.max_open_files, policy.max_open_files))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))

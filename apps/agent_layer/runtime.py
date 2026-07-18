@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from apps.agent_layer.billing import BillingLedger, BudgetExceededError
-from apps.agent_layer.llm import ChatResult, ToolCall, VLLMClient
+from apps.agent_layer.llm import ChatResult, LLMError, ToolCall, VLLMClient
 from apps.agent_layer.sandbox import ProcessSandbox
 from apps.agent_layer.tools import ToolRegistry, ToolSpec, validate_args
 from apps.agent_layer.xai import TraceStore
@@ -84,6 +84,16 @@ class AgentRuntime:
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         self.traces.begin(run_id, tenant, goal)
 
+        # Preflight (F3): Ein erschöpfter Tenant darf keinen einzigen echten
+        # LLM-Call mehr auslösen — der würde Kosten verursachen, die die
+        # anschließende Buchung nur noch ablehnen kann.
+        if self.ledger is not None and not self.ledger.has_budget(tenant):
+            reason = f"tenant {tenant!r}: budget exhausted (preflight)"
+            self.traces.step(run_id, "budget_stop", {"reason": reason})
+            self.traces.finish(run_id, "budget_exceeded", f"aborted: {reason}")
+            return RunResult(run_id=run_id, status="budget_exceeded",
+                             answer=f"aborted: {reason}")
+
         memory_hits = self._recall(run_id, goal, case_id)
         messages = self._initial_messages(goal, memory_hits)
 
@@ -108,6 +118,11 @@ class AgentRuntime:
         except BudgetExceededError as exc:
             status, answer = "budget_exceeded", f"aborted: {exc}"
             self.traces.step(run_id, "budget_stop", {"reason": str(exc)})
+        except LLMError as exc:
+            # F7: Der Trace darf nie als 'running' hängen bleiben — der Fehler
+            # ist Teil der Kausalkette und gehört ins Audit.
+            status, answer = "llm_error", f"aborted: {exc}"
+            self.traces.step(run_id, "llm_error", {"error": str(exc)})
 
         self._memorize(goal, case_id, run_id, status)
         self.traces.finish(run_id, status, answer)
@@ -184,10 +199,13 @@ class AgentRuntime:
 
         gate: dict[str, Any] = {"mode": "allow", "allowed": True}
         if self.kernel is not None:
-            decision = self.kernel.check_action({
-                "action_type": call.name, "case_id": case_id,
-                **{k: v for k, v in call.arguments.items() if isinstance(v, str)},
-            })
+            # Plattform-Kontext NACH den Tool-Argumenten setzen: LLM-gelieferte
+            # Argumente wie {"action_type": "harmlos"} dürfen den Gatekeeper-
+            # Kontext niemals überschreiben (Gate-Bypass, Finding F4).
+            action = {k: v for k, v in call.arguments.items() if isinstance(v, str)}
+            action["action_type"] = call.name
+            action["case_id"] = case_id
+            decision = self.kernel.check_action(action)
             gate = decision.to_dict()
             if not decision.allowed:
                 outcome = {"ok": False, "error": "blocked by memory gatekeeper",

@@ -79,11 +79,12 @@ def test_full_platform_roundtrip(api: str) -> None:
     assert run["status"] == "ok" and run["answer"] == "Das Ergebnis ist 42."
     assert run["tool_calls"] == 1 and run["cost_usd"] > 0
 
-    # 3. xAI: Trace und Explain sind abrufbar und konsistent.
-    trace = _call(f"{api}/api/trace?run_id={run['run_id']}")
+    # 3. xAI: Trace und Explain sind für den eigenen Tenant abrufbar.
+    trace = _call(f"{api}/api/trace?run_id={run['run_id']}", headers={"X-API-Key": key})
     assert [s["kind"] for s in trace["steps"]] == ["memory_hits", "llm_call",
                                                    "tool_call", "llm_call"]
-    explanation = _call(f"{api}/api/explain?run_id={run['run_id']}")
+    explanation = _call(f"{api}/api/explain?run_id={run['run_id']}",
+                        headers={"X-API-Key": key})
     assert explanation["llm"]["calls"] == 2
     assert explanation["cost"]["total_usd"] == pytest.approx(run["cost_usd"])
 
@@ -106,11 +107,36 @@ def test_auth_failures(api: str) -> None:
 def test_validation_and_missing_resources(api: str) -> None:
     issued = _call(f"{api}/api/keys", {"tenant": "acme"},
                    headers={"X-Admin-Token": ADMIN_TOKEN})
+    key = issued["api_key"]
     assert _status_of(lambda: _call(f"{api}/api/run", {},
-                                    headers={"X-API-Key": issued["api_key"]})) == 400
-    assert _status_of(lambda: _call(f"{api}/api/trace")) == 400
-    assert _status_of(lambda: _call(f"{api}/api/trace?run_id=run_missing")) == 404
-    assert _status_of(lambda: _call(f"{api}/api/explain?run_id=run_missing")) == 404
+                                    headers={"X-API-Key": key})) == 400
+    assert _status_of(lambda: _call(f"{api}/api/trace",
+                                    headers={"X-API-Key": key})) == 400
+    assert _status_of(lambda: _call(f"{api}/api/trace?run_id=run_missing",
+                                    headers={"X-API-Key": key})) == 404
+    assert _status_of(lambda: _call(f"{api}/api/explain?run_id=run_missing",
+                                    headers={"X-API-Key": key})) == 404
+
+
+def test_trace_isolation_between_tenants(api: str) -> None:
+    """F1: Traces sind mandantengetrennt — fremde Runs sind tabu, Admin darf."""
+    acme = _call(f"{api}/api/keys", {"tenant": "acme"},
+                 headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+    rival = _call(f"{api}/api/keys", {"tenant": "rival"},
+                  headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+    run = _call(f"{api}/api/run", {"goal": "Rechne 6*7"}, headers={"X-API-Key": acme})
+
+    # Ohne Key: 401. Fremder Tenant: 403. Eigener Tenant und Admin: 200.
+    assert _status_of(lambda: _call(f"{api}/api/trace?run_id={run['run_id']}")) == 401
+    assert _status_of(lambda: _call(f"{api}/api/trace?run_id={run['run_id']}",
+                                    headers={"X-API-Key": rival})) == 403
+    assert _status_of(lambda: _call(f"{api}/api/explain?run_id={run['run_id']}",
+                                    headers={"X-API-Key": rival})) == 403
+    own = _call(f"{api}/api/trace?run_id={run['run_id']}", headers={"X-API-Key": acme})
+    assert own["tenant"] == "acme"
+    admin = _call(f"{api}/api/trace?run_id={run['run_id']}",
+                  headers={"X-Admin-Token": ADMIN_TOKEN})
+    assert admin["run_id"] == run["run_id"]
 
 
 def test_tools_and_health_endpoints(api: str) -> None:

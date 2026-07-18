@@ -6,7 +6,7 @@ import pytest
 
 from brainfump import BrainFumpKernel
 from apps.agent_layer.billing import BillingLedger, BudgetExceededError
-from apps.agent_layer.llm import ChatResult, ToolCall
+from apps.agent_layer.llm import ChatResult, LLMError, ToolCall
 from apps.agent_layer.runtime import AgentRuntime
 from apps.agent_layer.tools import builtin_registry
 from apps.agent_layer.xai import TraceStore
@@ -148,6 +148,51 @@ def test_billing_records_llm_and_tool_charges() -> None:
     kinds = [item["kind"] for item in breakdown["items"]]
     assert kinds == ["llm", "tool", "llm"]
     assert result.cost_usd == pytest.approx(breakdown["total_usd"])
+
+
+def test_preflight_blocks_exhausted_tenant_before_any_llm_call() -> None:
+    """F3: Ein erschöpfter Tenant löst keinen einzigen echten LLM-Call mehr aus."""
+    ledger = BillingLedger()
+    ledger.create_key("broke", budget_usd=0.0)
+    runtime, traces = _runtime([_answer("dürfte nie gesendet werden")], ledger=ledger)
+    result = runtime.run("frage", tenant="broke")
+    assert result.status == "budget_exceeded" and result.llm_calls == 0
+    assert runtime.llm.script  # das Skript wurde nicht angerührt → kein LLM-Call
+    assert traces.trace(result.run_id)["steps"][0]["kind"] == "budget_stop"
+
+
+def test_tool_arguments_cannot_override_gatekeeper_context() -> None:
+    """F4: {"action_type": "harmlos"} als Tool-Argument darf das Gate nicht umgehen."""
+    kernel = BrainFumpKernel(None)
+    kernel.record("policy_violation", "risky verboten",
+                  payload={"forbidden_actions": ["risky"]})
+    runtime, traces = _runtime([
+        _tool_call("risky", {"action_type": "harmlos"}),
+        _answer("ok"),
+    ], kernel=kernel)
+    runtime.registry.tool(
+        "risky", "d",
+        {"type": "object", "properties": {"action_type": {"type": "string"}}},
+    )(lambda action_type="x": {"done": True})
+    result = runtime.run("x", case_id="a")
+    step = next(s for s in traces.trace(result.run_id)["steps"] if s["kind"] == "tool_call")
+    assert step["payload"]["gate"]["allowed"] is False
+
+
+def test_llm_error_finishes_trace_and_reports_status() -> None:
+    """F7: Ein LLM-Backend-Fehler hinterlässt keinen 'running'-Zombie-Trace."""
+
+    class ExplodingLLM:
+        def chat(self, messages, tools=None, **_):
+            raise LLMError("backend down")
+
+    traces = TraceStore()
+    runtime = AgentRuntime(llm=ExplodingLLM(), registry=builtin_registry(), traces=traces)
+    result = runtime.run("frage")
+    assert result.status == "llm_error" and "backend down" in result.answer
+    trace = traces.trace(result.run_id)
+    assert trace["status"] == "llm_error"
+    assert "Abbruch durch LLM-Backend-Fehler" in " ".join(traces.explain(result.run_id)["narrative"])
 
 
 def test_budget_error_outside_runtime_still_raises() -> None:

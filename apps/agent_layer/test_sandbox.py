@@ -83,6 +83,22 @@ def test_network_egress_is_blocked_by_default(sandbox: ProcessSandbox) -> None:
     assert "network egress is disabled" in (result.error or "")
 
 
+def _modest_tool() -> dict:
+    blob = bytearray(8 * 1024 * 1024)
+    return {"allocated_mib": len(blob) // (1024 * 1024)}
+
+
+def test_memory_limit_is_relative_to_inherited_address_space(sandbox: ProcessSandbox) -> None:
+    """F2: Ein großer Parent-Prozess darf legitime Tools nicht verhungern lassen —
+    memory_bytes ist der Spielraum des Tools, nicht der absolute Adressraum."""
+    ballast = bytearray(300 * 1024 * 1024)  # Parent > Policy-Limit aufblähen
+    try:
+        result = sandbox.run(_modest_tool, {}, SandboxPolicy(memory_bytes=64 * 1024 * 1024))
+    finally:
+        del ballast
+    assert result.ok and result.value == {"allocated_mib": 8}
+
+
 def test_environment_is_scrubbed_and_cwd_isolated(sandbox: ProcessSandbox, monkeypatch) -> None:
     monkeypatch.setenv("AGENT_SECRET", "hunter2")
     result = sandbox.run(_env_probe, {})

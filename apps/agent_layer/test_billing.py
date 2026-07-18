@@ -60,6 +60,21 @@ def test_run_cost_breakdown(ledger: BillingLedger) -> None:
     assert report["total_usd"] == pytest.approx(sum(i["cost_usd"] for i in report["items"]))
 
 
+def test_tiny_calls_are_never_free(ledger: BillingLedger) -> None:
+    """F8: Ceiling-Rundung — auch Mini-Calls kosten mindestens 1 Mikro-USD."""
+    assert ledger.charge_llm("t", "r", prompt_tokens=1, completion_tokens=0) == 1
+    assert ledger.prices.llm_cost(0, 0) == 0  # aber 0 Tokens kosten 0
+
+
+def test_has_budget_preflight(ledger: BillingLedger) -> None:
+    assert ledger.has_budget("unbudgetiert")  # ohne Budget: erlaubt
+    ledger.create_key("acme", budget_usd=0.0002)  # 200 Mikro-USD = 2 Tool-Calls
+    assert ledger.has_budget("acme")
+    ledger.charge_tool("acme", "r", "calc")
+    ledger.charge_tool("acme", "r", "calc")  # Budget exakt erschöpft
+    assert not ledger.has_budget("acme")
+
+
 def test_custom_price_table() -> None:
     prices = PriceTable(prompt_per_1m=1_000_000, completion_per_1m=2_000_000, per_tool_call=0)
     ledger = BillingLedger(prices=prices)

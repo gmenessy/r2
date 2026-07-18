@@ -37,9 +37,10 @@ class PriceTable:
     per_tool_call: int = 100           # 0.0001 USD pro Tool-Ausführung
 
     def llm_cost(self, prompt_tokens: int, completion_tokens: int) -> int:
-        return (
-            prompt_tokens * self.prompt_per_1m + completion_tokens * self.completion_per_1m
-        ) // 1_000_000
+        # Aufrunden (Ceiling): sonst wären Mini-Calls unterhalb der
+        # Mikro-USD-Auflösung dauerhaft kostenlos (Finding F8).
+        raw = prompt_tokens * self.prompt_per_1m + completion_tokens * self.completion_per_1m
+        return -(-raw // 1_000_000)
 
 
 def _hash_key(api_key: str) -> str:
@@ -109,6 +110,15 @@ class BillingLedger:
         return cursor.rowcount > 0
 
     # -- Buchungen ------------------------------------------------------------
+
+    @locked
+    def has_budget(self, tenant: str) -> bool:
+        """Preflight: hat der Tenant noch Rest-Budget? (ohne Budget: ja).
+
+        Verhindert, dass ein erschöpfter Tenant noch echte LLM-Kosten auslöst,
+        bevor die Buchung scheitert (Finding F3)."""
+        budget = self._budget(tenant)
+        return budget is None or self._spent(tenant) < budget
 
     @locked
     def charge_llm(self, tenant: str, run_id: str, prompt_tokens: int,
