@@ -8,6 +8,12 @@ Die Plattform ist API-first: Apps entstehen, indem man Tools registriert und
 separater Dienst; die Plattform selbst braucht nur Python-Stdlib + SQLite und
 läuft auf einer kleinen CPU-Instanz.
 
+**Ist-Footprint (2026-07-18):** ~1.945 LOC Kern, 0 externe Runtime-Abhängigkeiten,
+~159 ms Kaltstart, ~23 MiB RSS im Leerlauf. Diese Leichtgewichtigkeit ist ein
+verbindliches, gemessenes Ziel — siehe [`docs/PLATFORM_CHARTER.md`](../../docs/PLATFORM_CHARTER.md)
+(Zielsetzung + Budgets) und [`docs/SPRINT_PLAN_4_5.md`](../../docs/SPRINT_PLAN_4_5.md)
+(Roadmap: Async/Streaming, Tenant-Sharding).
+
 ## Architektur
 
 ```
