@@ -141,7 +141,9 @@ result = runtime.run("Prüfe die Rechnung …", tenant="acme", case_id="akte_1")
 |---|---|---|
 | `POST /api/keys` | `X-Admin-Token` | API-Key für einen Tenant ausstellen (`budget_usd`, optional `ttl_seconds`) |
 | `POST /api/keys/rotate` | `X-API-Key` | Eigenen Key rotieren; alter gilt im Kulanzfenster weiter (`grace_seconds`) |
-| `POST /api/run` | `X-API-Key` | Agent-Run: `{goal, case_id?}` → Antwort, Kosten, run_id (Rate-Limit → `429` + `Retry-After`) |
+| `POST /api/run` | `X-API-Key` | Agent-Run: `{goal, case_id?, async?}` → Antwort+Kosten (sync) oder `202`+`run_id` (async); Rate-Limit → `429`, Überlast → `503`, je mit `Retry-After` |
+| `GET /api/runs?run_id=` | `X-API-Key` / Admin | Zustand/Ergebnis eines async Runs (`queued`/`running`/`done`/`error`) |
+| `GET /api/runs/stream?run_id=` | `X-API-Key` / Admin | Live-Stream der Trace-Schritte als Server-Sent Events (`step`/`done`) |
 | `GET /api/trace?run_id=` | `X-API-Key` / Admin | Schritt-Trace — nur eigener Tenant oder Admin |
 | `GET /api/explain?run_id=` | `X-API-Key` / Admin | Begründung + Kosten-Breakdown — nur eigener Tenant oder Admin |
 | `GET /api/usage` | `X-API-Key` | Verbrauch, Budget, Rest des eigenen Tenants |
@@ -165,6 +167,23 @@ Verifikation in [`docs/DEPLOY_HARDENING.md`](../../docs/DEPLOY_HARDENING.md):
 - **Key-Lifecycle:** Ablauf (`ttl_seconds`) und Rotation mit Kulanzfenster.
 - **Retention:** `--retention-days` / `AGENT_RETENTION_DAYS` löscht alte Traces
   beim Start (Default aus — keine stille Löschung).
+
+## Durchsatz & Streaming (Sprint 4)
+
+- **Asynchrone Runs:** `{"async": true}` → sofort `202` + `run_id`; ein kleiner
+  `ThreadPoolExecutor` (`--async-workers`) arbeitet ab, `GET /api/runs?run_id=`
+  pollt. Lange Runs binden keinen Request-Thread mehr.
+- **Backpressure:** pro Tenant zu viele Runs in Flight → `429`, global
+  überlastet → `503` (je mit `Retry-After`) — der kleine Prozess puffert nicht
+  unbegrenzt.
+- **Token-/Trace-Streaming:** `GET /api/runs/stream?run_id=` als Server-Sent
+  Events (reine Stdlib) — Trace-Schritte live, sobald sie entstehen.
+- **Verschachtelte Schema-Validierung:** `validate_args` prüft `object`/`array`
+  rekursiv (ohne `jsonschema`), fängt strukturell falsche Tool-Argumente vor
+  der Sandbox.
+- **Leichtgewicht-Gate:** `scripts/measure_footprint.py` bewacht die Budgets
+  der [Charter](../../docs/PLATFORM_CHARTER.md) (0 Deps, Kaltstart < 400 ms,
+  RSS < 60 MiB) in der CI.
 
 ## Performance-Entscheidungen
 

@@ -26,5 +26,8 @@ jobs:
       - name: Lint (pyflakes)
         run: python -m pyflakes brainfump apps
 
+      - name: Footprint gate (Leichtgewichtigkeit)
+        run: python scripts/measure_footprint.py
+
       - name: Tests + coverage gate
         run: python -m pytest --cov

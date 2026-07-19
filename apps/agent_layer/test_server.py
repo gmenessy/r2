@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -13,6 +14,7 @@ from brainfump import BrainFumpKernel
 from apps.agent_layer.billing import BillingLedger
 from apps.agent_layer.llm import ChatResult, ToolCall
 from apps.agent_layer.ratelimit import RateLimiter
+from apps.agent_layer.runner import AsyncRunner
 from apps.agent_layer.runtime import AgentRuntime
 from apps.agent_layer.server import create_server
 from apps.agent_layer.simllm import SimulatedLLM
@@ -190,6 +192,134 @@ def test_key_rotation_endpoint(api: str) -> None:
     # Rotation ohne gültigen Key → 401.
     assert _status_of(lambda: _call(f"{api}/api/keys/rotate", {},
                                     headers={"X-API-Key": "agl_fake"})) == 401
+
+
+def _post_expect(url: str, payload: dict, headers: dict):
+    """POST, das eine Nicht-2xx-Antwort erwartet → (status, body)."""
+    data = json.dumps(payload).encode()
+    request = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json", **headers})
+    try:
+        with urllib.request.urlopen(request) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as err:
+        return err.code, json.loads(err.read())
+
+
+def test_async_run_submit_poll_and_isolation() -> None:
+    """S4-2: async Run liefert sofort 202+run_id; /api/runs pollt bis done."""
+    kernel = BrainFumpKernel(None)
+    ledger = BillingLedger()
+    traces = TraceStore()
+    runtime = AgentRuntime(llm=SimulatedLLM(), registry=builtin_registry(kernel),
+                           traces=traces, kernel=kernel, ledger=ledger)
+    runner = AsyncRunner(runtime, max_workers=2)
+    server = create_server(runtime, ledger, traces, admin_token=ADMIN_TOKEN,
+                           host="127.0.0.1", port=0, async_runner=runner)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        key = _call(f"{base}/api/keys", {"tenant": "acme", "budget_usd": 5.0},
+                    headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        rival = _call(f"{base}/api/keys", {"tenant": "rival", "budget_usd": 5.0},
+                      headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+
+        status, submitted = _post_expect(
+            f"{base}/api/run", {"goal": "Rechne (6*7).", "async": True},
+            headers={"X-API-Key": key})
+        assert status == 202 and submitted["status"] == "queued"
+        run_id = submitted["run_id"]
+
+        # Fremder Tenant darf den Status nicht sehen.
+        assert _status_of(lambda: _call(f"{base}/api/runs?run_id={run_id}",
+                                        headers={"X-API-Key": rival})) == 403
+
+        # Eigener Tenant pollt bis done.
+        result = None
+        for _ in range(200):
+            state = _call(f"{base}/api/runs?run_id={run_id}", headers={"X-API-Key": key})
+            if state["status"] == "done":
+                result = state["result"]
+                break
+            time.sleep(0.01)
+        assert result is not None and result["status"] == "ok"
+        assert "42" in result["answer"]
+    finally:
+        server.shutdown()
+        runner.shutdown()
+
+
+def test_async_global_backpressure_returns_503() -> None:
+    """S4-5: bei voller globaler Queue antwortet /api/run mit 503 + Retry-After."""
+    import threading as _t
+
+    class BlockingLLM:
+        model = "b"
+        base_url = "t://b"
+
+        def __init__(self) -> None:
+            self.release = _t.Event()
+
+        def chat(self, messages, tools=None, **_):
+            self.release.wait(timeout=5)
+            return SimulatedLLM().chat(messages, tools=tools)
+
+    kernel = BrainFumpKernel(None)
+    ledger = BillingLedger()
+    traces = TraceStore()
+    llm = BlockingLLM()
+    runtime = AgentRuntime(llm=llm, registry=builtin_registry(kernel), traces=traces,
+                           kernel=kernel, ledger=ledger)
+    runner = AsyncRunner(runtime, max_workers=2, max_inflight_total=1,
+                         max_inflight_per_tenant=10)
+    server = create_server(runtime, ledger, traces, admin_token=ADMIN_TOKEN,
+                           host="127.0.0.1", port=0, async_runner=runner)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        key = _call(f"{base}/api/keys", {"tenant": "acme", "budget_usd": 50.0},
+                    headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        s1, _ = _post_expect(f"{base}/api/run", {"goal": "a", "async": True},
+                             headers={"X-API-Key": key})
+        assert s1 == 202
+        s2, body = _post_expect(f"{base}/api/run", {"goal": "b", "async": True},
+                                headers={"X-API-Key": key})
+        assert s2 == 503 and body["error"] == "run queue full" and body["retry_after_s"] > 0
+    finally:
+        llm.release.set()
+        server.shutdown()
+        runner.shutdown()
+
+
+def test_sse_stream_emits_steps_and_done(api: str) -> None:
+    """S4-3: /api/runs/stream liefert die Trace-Schritte als SSE + done-Event."""
+    key = _call(f"{api}/api/keys", {"tenant": "acme", "budget_usd": 5.0},
+                headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+    run = _call(f"{api}/api/run", {"goal": "Rechne 6*7"}, headers={"X-API-Key": key})
+    run_id = run["run_id"]
+
+    request = urllib.request.Request(f"{api}/api/runs/stream?run_id={run_id}",
+                                     headers={"X-API-Key": key})
+    events = []
+    with urllib.request.urlopen(request, timeout=10) as response:
+        assert response.headers["Content-Type"] == "text/event-stream"
+        for raw in response:
+            line = raw.decode().strip()
+            if line.startswith("event:"):
+                events.append(line.split(":", 1)[1].strip())
+            if line.startswith("event: done") or "done" in events:
+                if events and events[-1] == "done":
+                    break
+    assert "step" in events           # mindestens ein Trace-Schritt gestreamt
+    assert events[-1] == "done"       # sauberer Abschluss
+
+    # Fremder Tenant kommt nicht an den Stream.
+    rival = _call(f"{api}/api/keys", {"tenant": "rival"},
+                  headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+    assert _status_of(lambda: _call(f"{api}/api/runs/stream?run_id={run_id}",
+                                    headers={"X-API-Key": rival})) == 403
 
 
 def test_tools_and_health_endpoints(api: str) -> None:

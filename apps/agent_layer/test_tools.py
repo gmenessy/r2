@@ -50,6 +50,52 @@ def test_validate_args_catches_hallucinated_input() -> None:
     assert any("expected integer" in p for p in validate_args(SCHEMA, {"a": "x", "n": True}))
 
 
+NESTED = {
+    "type": "object",
+    "properties": {
+        "user": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+            "required": ["name"],
+        },
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["user"],
+}
+
+
+def test_validate_args_nested_object_and_array_ok() -> None:
+    assert validate_args(NESTED, {"user": {"name": "Kim", "age": 30},
+                                  "tags": ["a", "b"]}) == []
+
+
+def test_validate_args_nested_type_errors() -> None:
+    problems = validate_args(NESTED, {"user": {"name": 5}, "tags": ["ok", 3]})
+    assert any("user.name: expected string" in p for p in problems)
+    assert any("tags[1]: expected string" in p for p in problems)
+
+
+def test_validate_args_nested_missing_required() -> None:
+    problems = validate_args(NESTED, {"user": {"age": 30}})
+    assert any("missing required argument: user.name" in p for p in problems)
+
+
+def test_validate_args_nested_unknown_field() -> None:
+    problems = validate_args(NESTED, {"user": {"name": "Kim", "x": 1}})
+    assert any("unknown argument: user.x" in p for p in problems)
+
+
+def test_validate_args_additional_properties_allowed() -> None:
+    schema = {"type": "object", "properties": {"a": {"type": "string"}},
+              "additionalProperties": True}
+    assert validate_args(schema, {"a": "x", "extra": 99}) == []
+
+
+def test_validate_args_wrong_container_type() -> None:
+    problems = validate_args(NESTED, {"user": "nicht-objekt"})
+    assert any("user: expected object" in p for p in problems)
+
+
 def test_safe_calc_arithmetic_and_rejections() -> None:
     assert safe_calc("(2+3)*4") == 20
     assert safe_calc("-7 // 2") == -4

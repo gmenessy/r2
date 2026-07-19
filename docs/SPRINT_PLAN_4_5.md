@@ -12,27 +12,28 @@ _Stand: 2026-07-18 · Basis: `claude/agent-execution-layer-bju91q` nach Sprint 3
 
 ## Sprint 4 — „Verschlanken & Durchreichen" (Skalierung *nach unten*, Streaming)
 
+> **✅ Durchgeführt (2026-07-19).** Alle fünf Tickets abgeschlossen, 316 →
+> **334 Tests** grün, Coverage ~95,9 %, Footprint-Gate aktiv (Kern 2.157 LOC,
+> Kaltstart ~86 ms, RSS 24 MiB — alle Budgets gehalten). Async/SSE zusätzlich
+> live gegen den laufenden Server verifiziert.
+
 **Sprint-Ziel:** Die Leichtgewichtigkeit gegen Regression absichern und die
 letzte Funktionslücke (synchrone Runs, O7) schließen — ohne eine einzige neue
 Laufzeit-Abhängigkeit.
 
-| Ticket | O/Charter | Prio | Aufwand | Beschreibung |
-|--------|:---------:|:----:|:-------:|--------------|
-| **S4-1 · Footprint-Gate** | Charter §2 | P1 | S | `scripts/measure_footprint.py` misst LOC, Kaltstart, RSS, Demo-LOC, Dependency-Zahl; CI-Job bricht bei Budgetüberschreitung ab. Verankert Leichtgewichtigkeit dauerhaft. |
-| **S4-2 · Asynchrone Runs (Job-Queue + Polling)** | O7 | P1 | L | `POST /api/run` akzeptiert `{"async": true}` → sofort `run_id` + `status: queued`; ein Stdlib-`ThreadPoolExecutor` (feste, kleine Größe) arbeitet ab; `GET /api/runs/{id}` pollt Status/Ergebnis. Synchroner Pfad bleibt Default. Lange Runs binden keinen Request-Thread mehr. |
-| **S4-3 · Token-Streaming (SSE)** | O7 | M | M | `GET /api/runs/{id}/stream` als Server-Sent-Events (reine Stdlib): Trace-Schritte werden live gepusht, sobald sie im Store landen. Nutzt die vorhandene Trace-Schritt-Sequenz — kein neuer Zustand. |
-| **S4-4 · Verschachtelte Schema-Validierung** | O8 | P2 | S | `validate_args` versteht `object`/`array`-`items`/`properties` rekursiv (Stdlib, kein `jsonschema`). Fängt strukturell falsche Tool-Argumente vor der Sandbox. |
-| **S4-5 · Backpressure & Queue-Limits** | O7/Charter | P2 | S | Queue-Tiefe je Tenant gedeckelt (`429`, wiederverwendet aus S3-4); voller Executor → `503` mit `Retry-After`. Schützt den kleinen Prozess vor Überlast statt unbegrenzt zu puffern. |
+| Ticket | O/Charter | Prio | Status | Beschreibung |
+|--------|:---------:|:----:|:------:|--------------|
+| **S4-1 · Footprint-Gate** | Charter §2 | P1 | ✅ | `scripts/measure_footprint.py` misst Deps/LOC/Kaltstart/RSS/Demo-LOC gegen die Charter-Budgets; CI-Schritt bricht bei Überschreitung ab. RSS über `VmRSS` (nicht `ru_maxrss`), Messung im isolierten Interpreter (`-I -S`) → deterministisch. |
+| **S4-2 · Asynchrone Runs (Job-Queue + Polling)** | O7 | P1 | ✅ | `POST /api/run {"async": true}` → `202` + `run_id`; `AsyncRunner` (Stdlib-`ThreadPoolExecutor`, feste Größe) arbeitet ab; `GET /api/runs?run_id=` pollt. Synchroner Pfad bleibt Default. |
+| **S4-3 · Token-Streaming (SSE)** | O7 | M | ✅ | `GET /api/runs/stream?run_id=` als Server-Sent-Events (webkit `StreamingResponse`, reine Stdlib): Trace-Schritte live als `step`/`done`-Events. |
+| **S4-4 · Verschachtelte Schema-Validierung** | O8 | P2 | ✅ | `validate_args` prüft `object`/`array` rekursiv über `properties`/`items` (Stdlib), mit `additionalProperties`-Respekt und Pfad-genauen Fehlern. |
+| **S4-5 · Backpressure & Queue-Limits** | O7/Charter | P2 | ✅ | In-Flight je Tenant gedeckelt → `429`; global überlastet → `503`; je mit `Retry-After`. |
 
-**Sequenzierung:** S4-1 zuerst (Gate steht, bevor L-Tickets Code hinzufügen) →
-S4-2 (Fundament) → S4-3/S4-5 (bauen auf der Queue auf) → S4-4 (isoliert).
+**Sequenzierung (umgesetzt):** S4-1 → S4-2/S4-5 (gemeinsam) → S4-3 → S4-4.
 
-**Charter-Check:** Alle Tickets sind Stdlib (`concurrent.futures`,
-`http.server`-SSE). Erwarteter LOC-Zuwachs ~350–450 → bleibt unter dem
+**Charter-Check (erfüllt):** Alles Stdlib (`concurrent.futures`, SSE über
+`http.server`). LOC-Zuwachs 1.945 → 2.157 (+212) — deutlich unter dem
 2.600-Budget. Kein neuer Dienst, keine neue Abhängigkeit.
-
-**Definition of Done:** wie Sprint 3 (Repro-vor-Test, offline-E2E über
-SimulatedLLM, Live-Smoke für S4-2/S4-3, Coverage-Gate) **plus**: S4-1-Gate grün.
 
 ---
 

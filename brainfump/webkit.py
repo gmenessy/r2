@@ -30,7 +30,7 @@ import logging
 import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
 # Standard-Obergrenze für Request-Bodies (1 MiB). Schützt vor
@@ -51,6 +51,7 @@ __all__ = [
     "HttpError",
     "Request",
     "Response",
+    "StreamingResponse",
     "WebApp",
     "json_response",
     "require",
@@ -123,6 +124,20 @@ class Response:
 def json_response(data: Any, status: int = 200,
                   headers: dict[str, str] | None = None) -> Response:
     return Response(json.dumps(data).encode(), "application/json", status, headers)
+
+
+class StreamingResponse(Response):
+    """Antwort, deren Body erst nach und nach entsteht (z. B. Server-Sent Events).
+
+    Statt eines fertigen Bodys trägt sie einen Iterator von Byte-Chunks; der
+    Server schreibt ohne ``Content-Length`` und schließt die Verbindung am
+    Ende. Bewusst minimal — reine Stdlib, kein Framework."""
+
+    def __init__(self, chunks: "Iterable[bytes]", content_type: str = "text/event-stream",
+                 status: int = 200, headers: dict[str, str] | None = None) -> None:
+        merged = {"Cache-Control": "no-cache", "Connection": "close", **(headers or {})}
+        super().__init__(b"", content_type, status, merged)
+        self.chunks = chunks
 
 
 def text_response(
@@ -282,6 +297,9 @@ def serve(
             self._access(method, path, status, start)
 
         def _write(self, response: Response) -> None:
+            if isinstance(response, StreamingResponse):
+                self._write_stream(response)
+                return
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(response.body)))
@@ -289,6 +307,19 @@ def serve(
                 self.send_header(name, value)
             self.end_headers()
             self.wfile.write(response.body)
+
+        def _write_stream(self, response: StreamingResponse) -> None:
+            self.send_response(response.status)
+            self.send_header("Content-Type", response.content_type)
+            for name, value in response.headers.items():
+                self.send_header(name, value)
+            self.end_headers()
+            try:
+                for chunk in response.chunks:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):  # pragma: no cover - Client trennt
+                pass
 
         def _access(self, method: str, path: str, status: int, start: float) -> None:
             if access_log:

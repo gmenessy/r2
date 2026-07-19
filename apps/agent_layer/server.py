@@ -19,18 +19,34 @@ Konfiguration (Umgebung):
 from __future__ import annotations
 
 import hmac
+import json
 import os
 import sys
+import time
 import uuid
 from http.server import ThreadingHTTPServer
+from typing import Iterator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from brainfump import BrainFumpKernel, __version__  # noqa: E402
-from brainfump.webkit import HttpError, Request, WebApp, json_response, require, serve  # noqa: E402
+from brainfump.webkit import (  # noqa: E402
+    HttpError,
+    Request,
+    StreamingResponse,
+    WebApp,
+    json_response,
+    require,
+    serve,
+)
 from apps.agent_layer.billing import BillingLedger  # noqa: E402
 from apps.agent_layer.llm import LLMError, VLLMClient  # noqa: E402
 from apps.agent_layer.ratelimit import RateLimiter  # noqa: E402
+from apps.agent_layer.runner import (  # noqa: E402
+    AsyncRunner,
+    QueueFullError,
+    TenantQueueFullError,
+)
 from apps.agent_layer.runtime import AgentRuntime  # noqa: E402
 from apps.agent_layer.tools import builtin_registry  # noqa: E402
 from apps.agent_layer.xai import TraceStore  # noqa: E402
@@ -38,7 +54,8 @@ from apps.agent_layer.xai import TraceStore  # noqa: E402
 
 def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
               admin_token: str | None = None,
-              rate_limiter: RateLimiter | None = None) -> WebApp:
+              rate_limiter: RateLimiter | None = None,
+              async_runner: "AsyncRunner | None" = None) -> WebApp:
     app = WebApp()
     app.health("agent-layer", __version__)
 
@@ -96,6 +113,12 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
             raise HttpError(401, "key no longer valid")
         return {"api_key": new_key, "old_key_grace_seconds": grace}
 
+    def _retry(status: int, error: str, retry_after: float):
+        return json_response(
+            {"error": error, "retry_after_s": round(retry_after, 2)},
+            status, headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
+        )
+
     @app.post("/api/run")
     def _run(request: Request):
         body = request.json()
@@ -105,15 +128,64 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
             allowed, retry_after = rate_limiter.acquire(tenant)
             if not allowed:
                 # 429 mit Retry-After — der Client weiß, wann er es erneut darf.
-                return json_response(
-                    {"error": "rate limit exceeded", "retry_after_s": round(retry_after, 2)},
-                    429, headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
-                )
+                return _retry(429, "rate limit exceeded", retry_after)
+
+        # Async-Pfad (S4-2): sofort run_id zurück, Ausführung im Hintergrund.
+        if body.get("async") and async_runner is not None:
+            try:
+                run_id = async_runner.submit(body["goal"], tenant, case_id=body.get("case_id"))
+            except TenantQueueFullError as exc:
+                return _retry(429, "too many concurrent runs", exc.retry_after_s)
+            except QueueFullError as exc:  # global überlastet → 503 (S4-5)
+                return _retry(503, "run queue full", exc.retry_after_s)
+            return json_response({"run_id": run_id, "status": "queued"}, 202)
+
         try:
             result = runtime.run(body["goal"], tenant=tenant, case_id=body.get("case_id"))
         except LLMError as exc:
             raise HttpError(502, str(exc))
         return result.to_dict()
+
+    @app.get("/api/runs")
+    def _run_status(request: Request) -> dict:
+        """Zustand/Ergebnis eines async gestarteten Runs (S4-2). Nur eigener Tenant."""
+        run_id = request.query.get("run_id")
+        if not run_id:
+            raise HttpError(400, "missing query parameter: run_id")
+        tenant = _tenant(request)
+        state = async_runner.status(run_id) if async_runner is not None else None
+        if state is None:
+            raise HttpError(404, f"unknown async run: {run_id}")
+        if state["tenant"] != tenant and not _is_admin(request):
+            raise HttpError(403, "run belongs to another tenant")
+        return {"run_id": run_id, "status": state["status"], "result": state["result"]}
+
+    _TERMINAL = {"ok", "error", "budget_exceeded", "max_steps", "llm_error"}
+
+    def _sse_events(run_id: str, poll_s: float = 0.05, timeout_s: float = 120.0) -> Iterator[bytes]:
+        """Trace-Schritte live als Server-Sent Events, bis der Run terminal ist."""
+        sent = 0
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            trace = traces.trace(run_id)
+            if trace is None:
+                yield b"event: error\ndata: {\"error\": \"unknown run\"}\n\n"
+                return
+            for step in trace["steps"][sent:]:
+                yield f"event: step\ndata: {json.dumps(step, ensure_ascii=False)}\n\n".encode()
+            sent = len(trace["steps"])
+            if trace["status"] in _TERMINAL:
+                done = {"status": trace["status"], "answer": trace["answer"]}
+                yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n".encode()
+                return
+            time.sleep(poll_s)
+        yield b"event: timeout\ndata: {}\n\n"
+
+    @app.get("/api/runs/stream")
+    def _stream(request: Request):
+        """SSE-Stream der Trace-Schritte eines Runs (S4-3). Nur eigener Tenant/Admin."""
+        trace = _authorized_trace(request)  # 400/401/403/404 + Zugriffsprüfung
+        return StreamingResponse(_sse_events(trace["run_id"]))
 
     @app.get("/api/trace")
     def _trace(request: Request) -> dict:
@@ -140,9 +212,10 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
 
 def create_server(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
                   admin_token: str | None = None, host: str = "0.0.0.0",
-                  port: int = 8060, rate_limiter: RateLimiter | None = None) -> ThreadingHTTPServer:
+                  port: int = 8060, rate_limiter: RateLimiter | None = None,
+                  async_runner: AsyncRunner | None = None) -> ThreadingHTTPServer:
     return serve(build_app(runtime, ledger, traces, admin_token=admin_token,
-                           rate_limiter=rate_limiter),
+                           rate_limiter=rate_limiter, async_runner=async_runner),
                  host=host, port=port)
 
 
@@ -158,6 +231,9 @@ def main() -> None:  # pragma: no cover - manueller Einstiegspunkt
     parser.add_argument("--rate-per-minute", type=int,
                         default=int(os.environ.get("AGENT_RATE_PER_MINUTE", "0")),
                         help="Runs pro Minute je Tenant (0 = kein Limit)")
+    parser.add_argument("--async-workers", type=int,
+                        default=int(os.environ.get("AGENT_ASYNC_WORKERS", "4")),
+                        help="Worker-Threads für async Runs (0 = async deaktiviert)")
     args = parser.parse_args()
 
     os.makedirs(args.data, exist_ok=True)
@@ -187,8 +263,10 @@ def main() -> None:  # pragma: no cover - manueller Einstiegspunkt
         print(f"ADMIN_TOKEN nicht gesetzt — generiert für diese Instanz: {admin_token}")
 
     rate_limiter = RateLimiter(args.rate_per_minute) if args.rate_per_minute > 0 else None
+    async_runner = AsyncRunner(runtime, max_workers=args.async_workers) \
+        if args.async_workers > 0 else None
     server = create_server(runtime, ledger, traces, admin_token=admin_token, port=args.port,
-                           rate_limiter=rate_limiter)
+                           rate_limiter=rate_limiter, async_runner=async_runner)
     print(f"Agent Execution Layer auf http://0.0.0.0:{args.port} "
           f"(LLM: {runtime.llm.model} @ {runtime.llm.base_url}, Daten: {args.data})")
     server.serve_forever()

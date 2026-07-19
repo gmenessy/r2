@@ -88,8 +88,9 @@ class AgentRuntime:
 
     # -- Öffentliche API ------------------------------------------------------
 
-    def run(self, goal: str, tenant: str = "default", case_id: str | None = None) -> RunResult:
-        run_id = f"run_{uuid.uuid4().hex[:12]}"
+    def run(self, goal: str, tenant: str = "default", case_id: str | None = None,
+            run_id: str | None = None) -> RunResult:
+        run_id = run_id or f"run_{uuid.uuid4().hex[:12]}"
         self.traces.begin(run_id, tenant, goal)
 
         # Preflight (F3): Ein erschöpfter Tenant darf keinen einzigen echten

@@ -58,29 +58,56 @@ class ToolSpec:
 def validate_args(parameters: dict[str, Any], args: dict[str, Any]) -> list[str]:
     """Leichtgewichtige Prüfung gegen das Parameter-Schema.
 
-    Deckt Pflichtfelder, unbekannte Felder und die JSON-Basistypen ab — genug,
-    um halluzinierte Argumente vor der Sandbox abzufangen, ohne einen
-    JSON-Schema-Validator als Abhängigkeit zu ziehen.
+    Deckt Pflichtfelder, unbekannte Felder und JSON-Typen ab — inklusive
+    **verschachtelter** ``object``/``array``-Schemata (S4-4), rekursiv über
+    ``properties`` bzw. ``items``. Reine Stdlib, kein ``jsonschema``.
     """
+    return _validate(parameters, args, path="")
+
+
+def _type_ok(schema: dict[str, Any], value: Any, path: str) -> str | None:
+    expected = _JSON_TYPES.get(schema.get("type", ""))
+    if expected is None:
+        return None
+    if expected is int and isinstance(value, bool):
+        return f"argument {path}: expected integer, got boolean"
+    # bool ist Subtyp von int — für "number" akzeptieren wir keine Bools.
+    if schema.get("type") == "number" and isinstance(value, bool):
+        return f"argument {path}: expected number, got boolean"
+    if not isinstance(value, expected):
+        return f"argument {path}: expected {schema['type']}, got {type(value).__name__}"
+    return None
+
+
+def _validate(schema: dict[str, Any], value: Any, path: str) -> list[str]:
     problems: list[str] = []
-    properties: dict[str, Any] = parameters.get("properties", {})
-    for name in parameters.get("required", []):
-        if name not in args:
-            problems.append(f"missing required argument: {name}")
-    for name, value in args.items():
-        if name not in properties:
-            problems.append(f"unknown argument: {name}")
-            continue
-        expected = _JSON_TYPES.get(properties[name].get("type", ""))
-        if expected is None:
-            continue
-        if expected is int and isinstance(value, bool):
-            problems.append(f"argument {name}: expected integer, got boolean")
-        elif not isinstance(value, expected):
-            problems.append(
-                f"argument {name}: expected {properties[name]['type']}, got {type(value).__name__}"
-            )
+    type_problem = _type_ok(schema, value, path or "<root>")
+    if type_problem:
+        return [type_problem]  # bei falschem Typ nicht weiter absteigen
+
+    if schema.get("type") == "object" and isinstance(value, dict):
+        properties: dict[str, Any] = schema.get("properties", {})
+        for name in schema.get("required", []):
+            if name not in value:
+                problems.append(f"missing required argument: {_join(path, name)}")
+        allow_extra = schema.get("additionalProperties", False)
+        for name, item in value.items():
+            child = _join(path, name)
+            if name not in properties:
+                if not allow_extra:
+                    problems.append(f"unknown argument: {child}")
+                continue
+            problems.extend(_validate(properties[name], item, child))
+    elif schema.get("type") == "array" and isinstance(value, list):
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                problems.extend(_validate(item_schema, item, f"{path or '<root>'}[{index}]"))
     return problems
+
+
+def _join(path: str, name: str) -> str:
+    return f"{path}.{name}" if path else name
 
 
 class ToolRegistry:
