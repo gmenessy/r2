@@ -182,13 +182,22 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
 
     _TERMINAL = {"ok", "error", "budget_exceeded", "max_steps", "llm_error"}
 
-    def _sse_events(run_id: str, poll_s: float = 0.05, timeout_s: float = 120.0) -> Iterator[bytes]:
-        """Trace-Schritte live als Server-Sent Events, bis der Run terminal ist."""
+    def _sse_events(run_id: str, poll_s: float = 0.05, timeout_s: float = 120.0,
+                    wait_for_begin: bool = False) -> Iterator[bytes]:
+        """Trace-Schritte live als Server-Sent Events, bis der Run terminal ist.
+
+        ``wait_for_begin``: der Run ist async eingereiht, aber noch nicht
+        gestartet (kein Trace) — geduldig auf ``begin()`` warten statt sofort
+        mit ``unknown run`` abzubrechen (Politur des queued-Race)."""
         sent = 0
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             trace = traces.trace(run_id)
             if trace is None:
+                if wait_for_begin:
+                    yield b": waiting for run start\n\n"  # SSE-Kommentar als Heartbeat
+                    time.sleep(poll_s)
+                    continue
                 yield b"event: error\ndata: {\"error\": \"unknown run\"}\n\n"
                 return
             for step in trace["steps"][sent:]:
@@ -204,6 +213,15 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
     @app.get("/api/runs/stream")
     def _stream(request: Request):
         """SSE-Stream der Trace-Schritte eines Runs (S4-3). Nur eigener Tenant/Admin."""
+        run_id = request.query.get("run_id")
+        # Async eingereiht, aber noch nicht gestartet? Dann gibt es noch keinen
+        # Trace — gegen den Runner-Zustand autorisieren und auf begin() warten.
+        if run_id and async_runner is not None and traces.trace(run_id) is None:
+            state = async_runner.status(run_id)
+            if state is not None:
+                if not _is_admin(request) and state["tenant"] != _tenant(request):
+                    raise HttpError(403, "run belongs to another tenant")
+                return StreamingResponse(_sse_events(run_id, wait_for_begin=True))
         trace = _authorized_trace(request)  # 400/401/403/404 + Zugriffsprüfung
         return StreamingResponse(_sse_events(trace["run_id"]))
 

@@ -415,6 +415,72 @@ def test_metrics_endpoint_prometheus_format() -> None:
         server.shutdown()
 
 
+def test_sse_stream_waits_for_queued_async_run() -> None:
+    """Politur: Stream eines noch queued Async-Runs wartet auf begin() statt 404.
+
+    Repro vor dem Fix: 1 Worker, zweiter Run bleibt queued (kein Trace) →
+    /api/runs/stream antwortete 404, obwohl der Run existiert."""
+    import threading as _t
+
+    class BlockingLLM:
+        model = "b"
+        base_url = "t://b"
+
+        def __init__(self) -> None:
+            self.release = _t.Event()
+
+        def chat(self, messages, tools=None, **_):
+            self.release.wait(timeout=5)
+            return SimulatedLLM().chat(messages, tools=tools)
+
+    kernel = BrainFumpKernel(None)
+    ledger = BillingLedger()
+    traces = TraceStore()
+    llm = BlockingLLM()
+    runtime = AgentRuntime(llm=llm, registry=builtin_registry(kernel), traces=traces,
+                           kernel=kernel, ledger=ledger)
+    runner = AsyncRunner(runtime, max_workers=1)  # 1 Worker → zweiter Run queued
+    server = create_server(runtime, ledger, traces, admin_token=ADMIN_TOKEN,
+                           host="127.0.0.1", port=0, async_runner=runner)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        key = _call(f"{base}/api/keys", {"tenant": "acme", "budget_usd": 5.0},
+                    headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        rival = _call(f"{base}/api/keys", {"tenant": "rival"},
+                      headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        _post_expect(f"{base}/api/run", {"goal": "a", "async": True},
+                     headers={"X-API-Key": key})  # belegt den Worker
+        _, queued = _post_expect(f"{base}/api/run", {"goal": "Rechne 6*7", "async": True},
+                                 headers={"X-API-Key": key})
+        run_id = queued["run_id"]
+        assert traces.trace(run_id) is None  # der Race-Zustand: queued, kein Trace
+
+        # Fremder Tenant wird auch im queued-Zustand abgewiesen.
+        assert _status_of(lambda: _call(f"{base}/api/runs/stream?run_id={run_id}",
+                                        headers={"X-API-Key": rival})) == 403
+
+        # Stream öffnen, DANN den Worker freigeben — Events müssen ankommen.
+        request = urllib.request.Request(f"{base}/api/runs/stream?run_id={run_id}",
+                                         headers={"X-API-Key": key})
+        response = urllib.request.urlopen(request, timeout=10)
+        assert response.status == 200  # kein 404 mehr im queued-Zustand
+        llm.release.set()
+        events = []
+        for raw in response:
+            line = raw.decode().strip()
+            if line.startswith("event:"):
+                events.append(line.split(":", 1)[1].strip())
+            if events and events[-1] == "done":
+                break
+        assert "step" in events and events[-1] == "done"
+    finally:
+        llm.release.set()
+        server.shutdown()
+        runner.shutdown()
+
+
 def test_tools_and_health_endpoints(api: str) -> None:
     tools = _call(f"{api}/api/tools")
     names = [t["name"] for t in tools["tools"]]

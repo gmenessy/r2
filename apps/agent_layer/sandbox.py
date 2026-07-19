@@ -27,6 +27,7 @@ import json
 import multiprocessing
 import os
 import tempfile
+import threading
 import time
 import traceback
 from dataclasses import dataclass
@@ -149,6 +150,25 @@ def _harden_child(policy: SandboxPolicy, workdir: str) -> bool:  # pragma: no co
     return will_drop
 
 
+def _detach_tracers() -> None:  # pragma: no cover - läuft im Kindprozess
+    """Einen aktiven Coverage-Tracer im geforkten Kind stoppen — WEICH, nur
+    wenn ``coverage`` bereits geladen ist (Testkontext). In Produktion ist das
+    Modul nicht importiert → No-op, keine Abhängigkeit. Ohne dies liefe der
+    Tool-Code im Kind unter Coverages C-Tracer und würde unter Last so langsam,
+    dass Wall-Timeouts fälschlich reißen."""
+    import sys as _sys
+
+    cov_mod = _sys.modules.get("coverage")
+    if cov_mod is None:
+        return
+    try:
+        current = cov_mod.Coverage.current()  # type: ignore[attr-defined]
+        if current is not None:
+            current.stop()
+    except Exception:
+        pass
+
+
 def _child_main(
     conn: Any,
     fn: Callable[..., Any],
@@ -156,6 +176,19 @@ def _child_main(
     policy: SandboxPolicy,
     workdir: str,
 ) -> None:  # pragma: no cover - läuft im Kindprozess, nicht im Coverage-Prozess
+    # Geerbte Trace-/Profile-Hooks der Plattform sofort abwerfen: untrusted
+    # Tool-Code darf nie unter einem Debugger/Profiler/Coverage-Tracer der
+    # Plattform laufen (Slowdown- und Informations-Leak-Vektor). Beseitigt
+    # zugleich die seltene Test-Flakiness, wenn die Suite unter `--cov` forkt
+    # und der geerbte Tracer im Kind mit dem Tool-Timing kollidiert.
+    import sys as _sys
+
+    _detach_tracers()
+    _sys.settrace(None)
+    _sys.setprofile(None)
+    threading.settrace(None)  # type: ignore[arg-type]
+    threading.setprofile(None)  # type: ignore[arg-type]
+
     dropped = False
     try:
         dropped = _harden_child(policy, workdir)
