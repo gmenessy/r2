@@ -48,6 +48,7 @@ from apps.agent_layer.runner import (  # noqa: E402
     TenantQueueFullError,
 )
 from apps.agent_layer.runtime import AgentRuntime  # noqa: E402
+from apps.agent_layer.sharding import ShardManifest  # noqa: E402
 from apps.agent_layer.tools import builtin_registry  # noqa: E402
 from apps.agent_layer.xai import TraceStore  # noqa: E402
 
@@ -55,9 +56,14 @@ from apps.agent_layer.xai import TraceStore  # noqa: E402
 def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
               admin_token: str | None = None,
               rate_limiter: RateLimiter | None = None,
-              async_runner: "AsyncRunner | None" = None) -> WebApp:
+              async_runner: "AsyncRunner | None" = None,
+              shard_index: int = 0,
+              manifest: ShardManifest | None = None,
+              controls: dict | None = None) -> WebApp:
     app = WebApp()
     app.health("agent-layer", __version__)
+    manifest = manifest or ShardManifest.single()
+    controls = controls if controls is not None else {"draining": False}
 
     def _tenant(request: Request) -> str:
         api_key = request.header("x-api-key") or request.query.get("api_key")
@@ -119,11 +125,25 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
             status, headers={"Retry-After": str(max(1, int(retry_after + 0.999)))},
         )
 
+    def _misdirected(tenant: str):
+        """S5-1: gehört der Tenant einem anderen Shard, mit Ziel-URL abweisen (421)."""
+        if manifest.owns(tenant, shard_index):
+            return None
+        owner = manifest.owner(tenant)
+        return json_response(
+            {"error": "misdirected: tenant belongs to another shard",
+             "shard": owner.to_dict()}, 421)
+
     @app.post("/api/run")
     def _run(request: Request):
         body = request.json()
         require(body, "goal")
         tenant = _tenant(request)
+        wrong_shard = _misdirected(tenant)
+        if wrong_shard is not None:
+            return wrong_shard
+        if controls["draining"]:  # S5-4: keine neuen Runs während des Drains
+            return _retry(503, "shard draining", 10.0)
         if rate_limiter is not None:
             allowed, retry_after = rate_limiter.acquire(tenant)
             if not allowed:
@@ -207,15 +227,65 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
         return {"tools": runtime.registry.describe(),
                 "sandbox_hardened": runtime.sandbox.hardened}
 
+    @app.get("/api/shards")
+    def _shards(_: Request) -> dict:
+        """S5-2: Shard-Manifest + Zustand dieser Instanz."""
+        return {"this_shard": shard_index, "draining": controls["draining"],
+                **manifest.to_dict()}
+
+    @app.post("/api/admin/drain")
+    def _drain(request: Request) -> dict:
+        """S5-4: Instanz für Rebalancing entladen (keine neuen Runs). Admin-only."""
+        if not _is_admin(request):
+            raise HttpError(403, "invalid admin token")
+        controls["draining"] = bool(request.json().get("draining", True))
+        return {"shard": shard_index, "draining": controls["draining"]}
+
+    @app.get("/api/metrics")
+    def _metrics(_: Request):
+        """S5-5: Prometheus-Textformat — Runs, In-Flight, Kosten, Shard."""
+        by_status = traces.counts_by_status()
+        inflight = async_runner.stats()["inflight"] if async_runner is not None else 0
+        totals = ledger.totals()
+        lines = [
+            "# HELP agent_runs_total Runs by terminal/interim status.",
+            "# TYPE agent_runs_total counter",
+        ]
+        for status, count in sorted(by_status.items()):
+            lines.append(f'agent_runs_total{{status="{status}"}} {count}')
+        lines += [
+            "# HELP agent_inflight_runs Async runs currently queued or running.",
+            "# TYPE agent_inflight_runs gauge",
+            f"agent_inflight_runs {inflight}",
+            "# HELP agent_spent_usd Total booked cost in USD.",
+            "# TYPE agent_spent_usd counter",
+            f"agent_spent_usd {totals['spent_usd']}",
+            "# HELP agent_reserved_usd Currently reserved (pre-authorized) USD.",
+            "# TYPE agent_reserved_usd gauge",
+            f"agent_reserved_usd {totals['reserved_usd']}",
+            "# HELP agent_active_tenants Tenants with a valid key.",
+            "# TYPE agent_active_tenants gauge",
+            f"agent_active_tenants {totals['active_tenants']}",
+            "# HELP agent_shard_index This instance's shard index.",
+            "# TYPE agent_shard_index gauge",
+            f"agent_shard_index {shard_index}",
+        ]
+        from brainfump.webkit import text_response
+        return text_response("\n".join(lines) + "\n",
+                             content_type="text/plain; version=0.0.4; charset=utf-8")
+
     return app
 
 
 def create_server(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
                   admin_token: str | None = None, host: str = "0.0.0.0",
                   port: int = 8060, rate_limiter: RateLimiter | None = None,
-                  async_runner: AsyncRunner | None = None) -> ThreadingHTTPServer:
+                  async_runner: AsyncRunner | None = None,
+                  shard_index: int = 0,
+                  manifest: ShardManifest | None = None) -> ThreadingHTTPServer:
     return serve(build_app(runtime, ledger, traces, admin_token=admin_token,
-                           rate_limiter=rate_limiter, async_runner=async_runner),
+                           rate_limiter=rate_limiter, async_runner=async_runner,
+                           shard_index=shard_index, manifest=manifest),
                  host=host, port=port)
 
 
@@ -234,6 +304,12 @@ def main() -> None:  # pragma: no cover - manueller Einstiegspunkt
     parser.add_argument("--async-workers", type=int,
                         default=int(os.environ.get("AGENT_ASYNC_WORKERS", "4")),
                         help="Worker-Threads für async Runs (0 = async deaktiviert)")
+    parser.add_argument("--shard-index", type=int,
+                        default=int(os.environ.get("AGENT_SHARD_INDEX", "0")),
+                        help="Index dieser Instanz im Sharding (Default 0)")
+    parser.add_argument("--shard-total", type=int,
+                        default=int(os.environ.get("AGENT_SHARD_TOTAL", "1")),
+                        help="Anzahl Shards insgesamt (1 = kein Sharding)")
     args = parser.parse_args()
 
     os.makedirs(args.data, exist_ok=True)
@@ -265,10 +341,13 @@ def main() -> None:  # pragma: no cover - manueller Einstiegspunkt
     rate_limiter = RateLimiter(args.rate_per_minute) if args.rate_per_minute > 0 else None
     async_runner = AsyncRunner(runtime, max_workers=args.async_workers) \
         if args.async_workers > 0 else None
+    manifest = ShardManifest(args.shard_total)
     server = create_server(runtime, ledger, traces, admin_token=admin_token, port=args.port,
-                           rate_limiter=rate_limiter, async_runner=async_runner)
+                           rate_limiter=rate_limiter, async_runner=async_runner,
+                           shard_index=args.shard_index, manifest=manifest)
     print(f"Agent Execution Layer auf http://0.0.0.0:{args.port} "
-          f"(LLM: {runtime.llm.model} @ {runtime.llm.base_url}, Daten: {args.data})")
+          f"(LLM: {runtime.llm.model} @ {runtime.llm.base_url}, Daten: {args.data}, "
+          f"Shard: {args.shard_index}/{args.shard_total})")
     server.serve_forever()
 
 

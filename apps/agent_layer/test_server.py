@@ -17,6 +17,7 @@ from apps.agent_layer.ratelimit import RateLimiter
 from apps.agent_layer.runner import AsyncRunner
 from apps.agent_layer.runtime import AgentRuntime
 from apps.agent_layer.server import create_server
+from apps.agent_layer.sharding import ShardManifest
 from apps.agent_layer.simllm import SimulatedLLM
 from apps.agent_layer.tools import builtin_registry
 from apps.agent_layer.xai import TraceStore
@@ -320,6 +321,98 @@ def test_sse_stream_emits_steps_and_done(api: str) -> None:
                   headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
     assert _status_of(lambda: _call(f"{api}/api/runs/stream?run_id={run_id}",
                                     headers={"X-API-Key": rival})) == 403
+
+
+def _shard_server(shard_index: int, total: int, port: int = 0):
+    """Eine Instanz mit Sharding-Konfiguration; gibt (base_url, server) zurück."""
+    kernel = BrainFumpKernel(None)
+    ledger = BillingLedger()
+    traces = TraceStore()
+    runtime = AgentRuntime(llm=SimulatedLLM(), registry=builtin_registry(kernel),
+                           traces=traces, kernel=kernel, ledger=ledger)
+    manifest = ShardManifest(total, urls={i: f"http://shard-{i}:8060" for i in range(total)})
+    server = create_server(runtime, ledger, traces, admin_token=ADMIN_TOKEN,
+                           host="127.0.0.1", port=port, shard_index=shard_index,
+                           manifest=manifest)
+    p = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{p}", server, manifest
+
+
+def test_tenant_sharding_routes_to_owning_instance() -> None:
+    """S5-1: zwei Instanzen; jede bedient nur ihre Tenants, weist fremde ab (421)."""
+    base0, s0, manifest = _shard_server(0, 2)
+    base1, s1, _ = _shard_server(1, 2)
+    try:
+        # Finde je einen Tenant, der Shard 0 bzw. 1 gehört.
+        t0 = next(f"t{i}" for i in range(100) if manifest.owner_index(f"t{i}") == 0)
+        t1 = next(f"t{i}" for i in range(100) if manifest.owner_index(f"t{i}") == 1)
+
+        k0 = _call(f"{base0}/api/keys", {"tenant": t0}, headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        # Eigener Tenant auf eigenem Shard: läuft.
+        assert _call(f"{base0}/api/run", {"goal": "hi"}, headers={"X-API-Key": k0})["status"]
+
+        # Fremder Tenant (gehört Shard 1) auf Shard 0: 421 + Ziel-Shard.
+        k1_on_0 = _call(f"{base0}/api/keys", {"tenant": t1},
+                        headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        status, body = _post_expect(f"{base0}/api/run", {"goal": "hi"},
+                                    headers={"X-API-Key": k1_on_0})
+        assert status == 421
+        assert body["shard"]["index"] == 1 and "shard-1" in body["shard"]["base_url"]
+
+        # /api/shards liefert das Manifest.
+        shards = _call(f"{base1}/api/shards")
+        assert shards["this_shard"] == 1 and shards["total"] == 2
+    finally:
+        s0.shutdown()
+        s1.shutdown()
+
+
+def test_drain_blocks_new_runs_but_serves_reads() -> None:
+    """S5-4: Drain weist neue Runs mit 503 ab, Lese-Endpunkte bleiben offen."""
+    base, server, _ = _shard_server(0, 1)
+    try:
+        key = _call(f"{base}/api/keys", {"tenant": "acme"},
+                    headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        # Drain aktivieren (Admin).
+        assert _status_of(lambda: _call(f"{base}/api/admin/drain", {"draining": True},
+                                        headers={"X-Admin-Token": "wrong"})) == 403
+        drain = _call(f"{base}/api/admin/drain", {"draining": True},
+                      headers={"X-Admin-Token": ADMIN_TOKEN})
+        assert drain["draining"] is True
+
+        status, body = _post_expect(f"{base}/api/run", {"goal": "hi"},
+                                    headers={"X-API-Key": key})
+        assert status == 503 and body["error"] == "shard draining"
+        # Lesen bleibt möglich.
+        assert _call(f"{base}/api/usage", headers={"X-API-Key": key})["tenant"] == "acme"
+
+        # Drain wieder aus → Runs laufen erneut.
+        _call(f"{base}/api/admin/drain", {"draining": False},
+              headers={"X-Admin-Token": ADMIN_TOKEN})
+        assert _call(f"{base}/api/run", {"goal": "hi"}, headers={"X-API-Key": key})["status"]
+    finally:
+        server.shutdown()
+
+
+def test_metrics_endpoint_prometheus_format() -> None:
+    """S5-5: /api/metrics liefert Prometheus-Textformat mit Run-/Kosten-Zählern."""
+    base, server, _ = _shard_server(0, 1)
+    try:
+        key = _call(f"{base}/api/keys", {"tenant": "acme", "budget_usd": 5.0},
+                    headers={"X-Admin-Token": ADMIN_TOKEN})["api_key"]
+        _call(f"{base}/api/run", {"goal": "Rechne 6*7"}, headers={"X-API-Key": key})
+
+        request = urllib.request.Request(f"{base}/api/metrics")
+        with urllib.request.urlopen(request) as response:
+            assert response.headers["Content-Type"].startswith("text/plain")
+            text = response.read().decode()
+        assert 'agent_runs_total{status="ok"} 1' in text
+        assert "agent_spent_usd " in text
+        assert "agent_shard_index 0" in text
+        assert "# TYPE agent_inflight_runs gauge" in text
+    finally:
+        server.shutdown()
 
 
 def test_tools_and_health_endpoints(api: str) -> None:

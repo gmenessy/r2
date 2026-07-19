@@ -16,6 +16,7 @@ from apps.agent_layer.ratelimit import RateLimiter
 from apps.agent_layer.runner import AsyncRunner, QueueFullError, TenantQueueFullError
 from apps.agent_layer.runtime import AgentRuntime, RunResult
 from apps.agent_layer.sandbox import ProcessSandbox, SandboxPolicy, SandboxResult
+from apps.agent_layer.sharding import Shard, ShardManifest
 from apps.agent_layer.simllm import SimulatedLLM
 from apps.agent_layer.tools import ToolRegistry, ToolSpec, builtin_registry
 from apps.agent_layer.xai import TraceStore
@@ -34,6 +35,8 @@ __all__ = [
     "RunResult",
     "SandboxPolicy",
     "SandboxResult",
+    "Shard",
+    "ShardManifest",
     "SimulatedLLM",
     "TenantQueueFullError",
     "ToolRegistry",

@@ -131,6 +131,12 @@ class TraceStore:
         return len(doomed)
 
     @locked
+    def counts_by_status(self) -> dict[str, int]:
+        """Anzahl Runs je Status — Grundlage des Metrics-Endpoints (S5-5)."""
+        return {status: count for status, count in self._conn.execute(
+            "SELECT status, COUNT(*) FROM runs GROUP BY status")}
+
+    @locked
     def recent(self, limit: int = 20) -> list[dict[str, Any]]:
         """Jüngste Runs (neueste zuerst) für Übersichten/UIs."""
         rows = self._conn.execute(

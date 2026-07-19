@@ -148,6 +148,9 @@ result = runtime.run("Prüfe die Rechnung …", tenant="acme", case_id="akte_1")
 | `GET /api/explain?run_id=` | `X-API-Key` / Admin | Begründung + Kosten-Breakdown — nur eigener Tenant oder Admin |
 | `GET /api/usage` | `X-API-Key` | Verbrauch, Budget, Rest des eigenen Tenants |
 | `GET /api/tools` | — | registrierte Tools inkl. Sandbox-Limits |
+| `GET /api/shards` | — | Shard-Manifest, eigener Index, Drain-Zustand |
+| `POST /api/admin/drain` | `X-Admin-Token` | Instanz für Rebalancing entladen (`{draining}`) |
+| `GET /api/metrics` | — | Prometheus-Textformat (Runs, In-Flight, Kosten, Shard) |
 | `GET /api/health`, `GET /api/version` | — | Betrieb/Docker-Healthcheck |
 
 ## Betrieb & Härtung (Sprint 3)
@@ -184,6 +187,24 @@ Verifikation in [`docs/DEPLOY_HARDENING.md`](../../docs/DEPLOY_HARDENING.md):
 - **Leichtgewicht-Gate:** `scripts/measure_footprint.py` bewacht die Budgets
   der [Charter](../../docs/PLATFORM_CHARTER.md) (0 Deps, Kaltstart < 400 ms,
   RSS < 60 MiB) in der CI.
+
+## Horizontale Skalierung (Sprint 5)
+
+Leichtgewichtige Antwort auf die Skalierungsfrage — **Tenant-Sharding statt
+verteilter DB** (keine neue Abhängigkeit, Charter §5):
+
+- **Sharding:** `--shard-index` / `--shard-total` (bzw. `AGENT_SHARD_*`). Jede
+  Instanz besitzt exklusiv `sha256(tenant) % total`-Tenants — kein geteilter
+  Budget-/Rate-State, keine Races. Der Hash ist prozess-stabil (nicht Pythons
+  gesalzenes `hash()`), also über Instanzen identisch.
+- **Routing:** Eine fremde Tenant-Anfrage wird mit `421` + Ziel-Shard-URL
+  abgewiesen (`GET /api/shards` liefert das Manifest).
+- **Drain/Rebalance:** `POST /api/admin/drain` entlädt eine Instanz (neue Runs
+  `503`, laufende beenden) für Sharding-Änderungen ohne Datenverlust.
+- **Metrics:** `GET /api/metrics` (Prometheus) je Shard.
+- **Persistenz-Naht:** `backends.py` definiert `LedgerBackend`/`TraceBackend`
+  als Protocol — ein Postgres-Adapter wäre ein optionales Extra hinter dieser
+  Naht, bewusst nicht im Kern.
 
 ## Performance-Entscheidungen
 

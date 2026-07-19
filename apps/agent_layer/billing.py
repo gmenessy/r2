@@ -316,6 +316,18 @@ class BillingLedger:
         }
 
     @locked
+    def totals(self) -> dict[str, float]:
+        """Instanzweite Summen für den Metrics-Endpoint (S5-5)."""
+        spent = self._conn.execute("SELECT COALESCE(SUM(cost_micro), 0) FROM usage").fetchone()[0]
+        tenants = self._conn.execute(
+            "SELECT COUNT(DISTINCT tenant) FROM api_keys WHERE revoked = 0").fetchone()[0]
+        reserved = self._conn.execute(
+            "SELECT COALESCE(SUM(amount_micro), 0) FROM reservations WHERE released = 0"
+        ).fetchone()[0]
+        return {"spent_usd": spent / MICRO_PER_USD, "active_tenants": int(tenants),
+                "reserved_usd": reserved / MICRO_PER_USD}
+
+    @locked
     def run_cost(self, run_id: str) -> dict[str, Any]:
         rows = self._conn.execute(
             "SELECT kind, detail, units_in, units_out, cost_micro FROM usage"

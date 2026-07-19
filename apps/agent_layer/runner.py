@@ -76,6 +76,13 @@ class AsyncRunner:
             state = self._states.get(run_id)
             return dict(state) if state is not None else None
 
+    def stats(self) -> dict[str, int]:
+        """In-Flight-Zähler für den Metrics-Endpoint (S5-5)."""
+        with self._lock:
+            queued = sum(1 for s in self._states.values() if s["status"] == "queued")
+            running = sum(1 for s in self._states.values() if s["status"] == "running")
+        return {"queued": queued, "running": running, "inflight": queued + running}
+
     def shutdown(self) -> None:  # pragma: no cover - Lebenszyklus
         self._executor.shutdown(wait=False, cancel_futures=True)
 

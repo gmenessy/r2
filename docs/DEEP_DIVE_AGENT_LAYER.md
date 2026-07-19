@@ -52,7 +52,7 @@ zusätzlich als dauerhafte Regressionstests verankert.
 | **O6** | xAI | Traces/Events wachsen unbegrenzt | ✅ **S3-5:** `TraceStore.prune()` (Alter + N-jüngste/Tenant), `--retention-days` beim Start |
 | **O7** | Performance | Synchrones Handling — lange Runs binden einen Thread | ✅ **S4-2/S4-3:** `AsyncRunner` (202+Polling) und SSE-Streaming, beide Stdlib; Backpressure (429/503) |
 | **O8** | Tools | `validate_args` ohne verschachtelte Schemata | ✅ **S4-4:** rekursive `object`/`array`-Validierung (Stdlib, kein `jsonschema`) |
-| **O3** | Skalierung | Ein-Prozess/SQLite — horizontal nicht skalierbar | ⏳ offen (Sprint 5): Tenant-Sharding statt verteilter DB; Postgres nur als optionale Naht |
+| **O3** | Skalierung | Ein-Prozess/SQLite — horizontal nicht skalierbar | ✅ **S5-1/S5-4:** Tenant-Sharding (`sha256`-stabil, `421`-Routing, Drain/Rebalance); Postgres bleibt optionale Naht (`backends.py`-Protocol), nicht im Kern |
 
 ---
 
