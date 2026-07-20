@@ -1,6 +1,6 @@
 # BrainFump NextGen — Anwendungs-Suite
 #
-#   docker compose up -d          → alle sechs Apps
+#   docker compose up -d          → alle acht Apps
 #   docker compose up -d <name>   → einzelne App
 #
 # Portschema:
@@ -11,6 +11,7 @@
 #   8050  memory-cockpit      Cognitive Core sichtbar: Graph + Live-Gatekeeper 🧭
 #   8060  agent-layer         Agent Execution Layer: Sandbox, Billing, xAI ⚙️
 #   8070  agent-flightdeck    Demo-App + Live-Cockpit des Agent Layer 🛫
+#   8080  agent-ops-console   Async/Streaming/Backpressure live: SRE-Agent 📡
 
 services:
   agentic-akte:
@@ -118,6 +119,23 @@ services:
       - agent_flightdeck_data:/data
     restart: unless-stopped
 
+  # Agent Ops Console — zweite Demo-App: macht Async-Runs, SSE-Streaming und
+  # Backpressure (Sprint 4/5) live erlebbar, ergänzend zum Flightdeck (das die
+  # Fundamente Sandbox/Gatekeeper/Budget/xAI im synchronen Modus zeigt).
+  agent-ops-console:
+    build:
+      context: .
+      dockerfile: apps/agent_ops_console/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      AGENT_SIM: ${AGENT_SIM:-1}
+      VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm:8000/v1}
+      AGENT_MODEL: ${AGENT_MODEL:-gemini4-31b}
+    volumes:
+      - agent_ops_console_data:/data
+    restart: unless-stopped
+
 networks:
   # Gemeinsames Netz der Plattform. Im DEV-Default NICHT internal, damit ein
   # extern laufender vLLM (VLLM_BASE_URL) erreichbar bleibt.
@@ -134,3 +152,4 @@ volumes:
   memory_house_data:
   agent_layer_data:
   agent_flightdeck_data:
+  agent_ops_console_data:

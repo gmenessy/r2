@@ -19,13 +19,10 @@ Konfiguration (Umgebung):
 from __future__ import annotations
 
 import hmac
-import json
 import os
 import sys
-import time
 import uuid
 from http.server import ThreadingHTTPServer
-from typing import Iterator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -49,6 +46,7 @@ from apps.agent_layer.runner import (  # noqa: E402
 )
 from apps.agent_layer.runtime import AgentRuntime  # noqa: E402
 from apps.agent_layer.sharding import ShardManifest  # noqa: E402
+from apps.agent_layer.streaming import trace_sse_events  # noqa: E402
 from apps.agent_layer.tools import builtin_registry  # noqa: E402
 from apps.agent_layer.xai import TraceStore  # noqa: E402
 
@@ -180,36 +178,6 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
             raise HttpError(403, "run belongs to another tenant")
         return {"run_id": run_id, "status": state["status"], "result": state["result"]}
 
-    _TERMINAL = {"ok", "error", "budget_exceeded", "max_steps", "llm_error"}
-
-    def _sse_events(run_id: str, poll_s: float = 0.05, timeout_s: float = 120.0,
-                    wait_for_begin: bool = False) -> Iterator[bytes]:
-        """Trace-Schritte live als Server-Sent Events, bis der Run terminal ist.
-
-        ``wait_for_begin``: der Run ist async eingereiht, aber noch nicht
-        gestartet (kein Trace) — geduldig auf ``begin()`` warten statt sofort
-        mit ``unknown run`` abzubrechen (Politur des queued-Race)."""
-        sent = 0
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            trace = traces.trace(run_id)
-            if trace is None:
-                if wait_for_begin:
-                    yield b": waiting for run start\n\n"  # SSE-Kommentar als Heartbeat
-                    time.sleep(poll_s)
-                    continue
-                yield b"event: error\ndata: {\"error\": \"unknown run\"}\n\n"
-                return
-            for step in trace["steps"][sent:]:
-                yield f"event: step\ndata: {json.dumps(step, ensure_ascii=False)}\n\n".encode()
-            sent = len(trace["steps"])
-            if trace["status"] in _TERMINAL:
-                done = {"status": trace["status"], "answer": trace["answer"]}
-                yield f"event: done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n".encode()
-                return
-            time.sleep(poll_s)
-        yield b"event: timeout\ndata: {}\n\n"
-
     @app.get("/api/runs/stream")
     def _stream(request: Request):
         """SSE-Stream der Trace-Schritte eines Runs (S4-3). Nur eigener Tenant/Admin."""
@@ -221,9 +189,9 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
             if state is not None:
                 if not _is_admin(request) and state["tenant"] != _tenant(request):
                     raise HttpError(403, "run belongs to another tenant")
-                return StreamingResponse(_sse_events(run_id, wait_for_begin=True))
+                return StreamingResponse(trace_sse_events(traces, run_id, wait_for_begin=True))
         trace = _authorized_trace(request)  # 400/401/403/404 + Zugriffsprüfung
-        return StreamingResponse(_sse_events(trace["run_id"]))
+        return StreamingResponse(trace_sse_events(traces, trace["run_id"]))
 
     @app.get("/api/trace")
     def _trace(request: Request) -> dict:
