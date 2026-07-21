@@ -2,12 +2,12 @@
 
 Zweite Demo-App neben dem [Flightdeck](../agent_flightdeck/): während das
 Flightdeck die *Fundamente* zeigt (Sandbox, Gatekeeper, Budget, xAI im
-synchronen Modus), macht die Ops Console die **Sprint-4/5-Fähigkeiten**
-sichtbar, die bisher nur per curl/Tests verifiziert waren — asynchrone Runs,
-Live-Streaming, Backpressure:
+synchronen Modus), macht die Ops Console die **Sprint-4/5- und Path-A-
+Fähigkeiten** sichtbar, die bisher nur per curl/Tests verifiziert waren —
+asynchrone Runs, Live-Streaming, Backpressure, WASM-Code-Execution:
 
-1. live_triage    Async-Run + SSE: Health-Check → automatische Skalierung,
-                   der Trace strömt live rein, während der Agent arbeitet
+1. live_triage    Async-Run + SSE: Health-Check → Schweregrad (WASM, ~80x
+                   schneller als Fork) → automatische Skalierung, live
 2. change_freeze   Governance verbietet restart_service während des
                    Quartalsabschlusses → Block, Agent weicht auf page_oncall aus
 3. noisy_neighbor  Mehrfach schnell ausgelöst zeigt das Rate-Limit live:
@@ -31,7 +31,29 @@ from apps.agent_layer.runtime import AgentRuntime
 from apps.agent_layer.sandbox import SandboxPolicy
 from apps.agent_layer.simllm import SimulatedLLM
 from apps.agent_layer.tools import ToolRegistry, builtin_registry
+from apps.agent_layer.wasm_sandbox import WasmSandboxPolicy
 from apps.agent_layer.xai import TraceStore
+
+# Schweregrad = latency_ms/10 + error_permille*2 — reine Ganzzahl-Arithmetik,
+# läuft in der WASM-Sandbox (Path A) statt im Fork-Kindprozess: ~80x schneller,
+# echtes Capability-Sandboxing (kein Import verlinkt). Details:
+# docs/PATH_A_WASM_SANDBOX.md
+_SEVERITY_WAT = """
+(module
+  (func (export "run") (param $latency_ms i64) (param $error_permille i64) (result i64)
+    local.get $latency_ms
+    i64.const 10
+    i64.div_s
+    local.get $error_permille
+    i64.const 2
+    i64.mul
+    i64.add))
+"""
+_SEVERITY_SCHEMA = {
+    "type": "object",
+    "properties": {"latency_ms": {"type": "integer"}, "error_permille": {"type": "integer"}},
+    "required": ["latency_ms", "error_permille"],
+}
 
 TENANT = "ops"
 
@@ -45,15 +67,17 @@ _STATES = ("healthy", "degraded", "down")
 SCENARIOS: dict[str, dict[str, Any]] = {
     "live_triage": {
         "title": "🔴 Live Triage — Incident live verfolgen",
-        "pillar": "Async Runs + SSE-Streaming",
+        "pillar": "Async Runs + SSE-Streaming + WASM-Sandbox",
         "description": "checkout-api hakt. Der Run läuft asynchron im Hintergrund "
                        "(sofort eine run_id, kein blockierender Request) — der Trace "
-                       "strömt live rein, während der Agent Health-Check und "
-                       "Skalierung ausführt.",
+                       "strömt live rein: Health-Check, Schweregrad-Berechnung in der "
+                       "WASM-Sandbox (Mikrosekunden statt Millisekunden) und Skalierung.",
         "async": True,
         "case_id": "incident_checkout",
-        "goal": ('Prüfe checkout-api und skaliere hoch, falls nötig. '
+        "goal": ('Prüfe checkout-api, berechne den Schweregrad und skaliere hoch, '
+                 'falls nötig. '
                  '[tool:check_health {"service": "checkout-api"}] '
+                 '[tool:severity_score {"latency_ms": 420, "error_permille": 12}] '
                  '[tool:scale_up {"service": "checkout-api", "replicas": 4}]'),
     },
     "change_freeze": {
@@ -134,6 +158,13 @@ def build_registry(kernel: BrainFumpKernel) -> ToolRegistry:
          "required": ["service", "message"]},
         side_effects=True,
     )(page_oncall)
+    registry.register_wasm(
+        "severity_score",
+        "Compute an incident severity score from latency and error rate "
+        "(runs in the WASM sandbox — Path A, ~80x faster than fork for pure arithmetic).",
+        _SEVERITY_SCHEMA, _SEVERITY_WAT,
+        wasm_policy=WasmSandboxPolicy(fuel=50_000, wall_timeout_s=0.5),
+    )
     return registry
 
 

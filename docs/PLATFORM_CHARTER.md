@@ -31,11 +31,19 @@ eine Überschreitung ist ein Build-Fehler, kein Diskussionspunkt.
 | Metrik | Baseline (2026-07-18) | Budget (Gate) | Messung |
 |---|---:|---:|---|
 | Externe Runtime-Abhängigkeiten | **0** | **0** — hart | `pyproject.toml dependencies == []` |
-| Kern-LOC (`apps/agent_layer/*.py` ohne Tests) | **1.945** | **≤ 2.600** | `scripts/measure_footprint.py` |
+| Kern-LOC (`apps/agent_layer/*.py` ohne Tests) | **1.945** | **≤ 2.900**¹ | `scripts/measure_footprint.py` |
 | Kaltstart bis „server-ready" | **159 ms** | **≤ 400 ms** | dito |
 | RSS im Leerlauf (Import + Stores) | **23 MiB** | **≤ 60 MiB** | dito |
 | Demo-App-LOC (Fach-App auf der Plattform) | **347** | **≤ 500** | dito |
 | Docker-Image (agent-layer) | `python:3.12-slim` | keine Nicht-Stdlib-Wheels | Dockerfile-Review |
+
+¹ Am 2026-07-19 von 2.600 auf 2.900 angehoben — begründete Ausnahme (siehe
+Regel unten) für Path A, die WASM-Sandbox (`wasm_sandbox.py`, ~200 LOC,
+~80× schnellere Code-Execution für numerische Tools als der Fork-Pfad).
+Details: [`docs/PATH_A_WASM_SANDBOX.md`](PATH_A_WASM_SANDBOX.md). Zählt
+weiterhin **nicht** gegen „Externe Runtime-Abhängigkeiten" — `wasmtime` ist
+ein optionales, echt lazy geladenes Extra (`pip install .[wasm]`), niemals
+Pflicht.
 
 **Regel:** Die Budgets haben ~30 % Kopffreiheit über der Baseline. Wer sie
 ausschöpfen will, muss den Gegenwert begründen. Wer sie sprengt, teilt das

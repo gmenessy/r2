@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from apps.agent_layer.sandbox import SandboxPolicy
+from apps.agent_layer.wasm_sandbox import WasmSandboxPolicy
 
 _JSON_TYPES: dict[str, type | tuple[type, ...]] = {
     "string": str,
@@ -36,13 +37,37 @@ class ToolError(Exception):
 
 @dataclass(frozen=True)
 class ToolSpec:
+    """Ein Tool läuft in genau einer von zwei Engines:
+
+    - ``engine="python"`` (Default): ``handler`` ist eine Python-Funktion,
+      läuft sandboxed im Kindprozess (:class:`SandboxPolicy`) oder — für
+      Plattform-Tools wie Memory — trusted inline (``sandboxed=False``).
+    - ``engine="wasm"``: ``wasm_source`` ist WAT-Text oder kompilierte
+      ``.wasm``-Bytes; läuft in der :class:`WasmSandbox` (Path A) — für reine
+      numerische Berechnungen ~80× schneller als der Kindprozess-Fork, mit
+      strukturell keiner Ambient Authority (kein WASI verlinkt).
+    """
+
     name: str
     description: str
     parameters: dict[str, Any]
-    handler: Callable[..., Any]
+    handler: Callable[..., Any] | None = None
     policy: SandboxPolicy = field(default_factory=SandboxPolicy)
     sandboxed: bool = True
     side_effects: bool = False
+    engine: str = "python"
+    wasm_source: bytes | str | None = None
+    wasm_policy: WasmSandboxPolicy = field(default_factory=WasmSandboxPolicy)
+
+    def __post_init__(self) -> None:
+        if self.engine == "wasm":
+            if self.wasm_source is None:
+                raise ToolError(f"wasm tool {self.name!r} requires wasm_source")
+        elif self.engine == "python":
+            if self.handler is None:
+                raise ToolError(f"python tool {self.name!r} requires a handler")
+        else:
+            raise ToolError(f"tool {self.name!r}: unknown engine {self.engine!r}")
 
     def openai_schema(self) -> dict[str, Any]:
         return {
@@ -143,6 +168,28 @@ class ToolRegistry:
 
         return decorator
 
+    def register_wasm(
+        self,
+        name: str,
+        description: str,
+        parameters: dict[str, Any],
+        wasm_source: bytes | str,
+        wasm_policy: WasmSandboxPolicy | None = None,
+        side_effects: bool = False,
+    ) -> ToolSpec:
+        """Ein WASM-Tool registrieren (Path A) — kein Python-Handler nötig.
+
+        ``wasm_source`` ist entweder WAT-Text (``str``, kompiliert bei erstem
+        Aufruf) oder bereits kompilierte ``.wasm``-Bytes. ``parameters`` muss
+        ein flaches Schema aus ``integer``/``number``/``boolean``-Properties
+        sein — die exportierte Funktion ``run`` wird mit genau diesen Typen
+        in Deklarationsreihenfolge aufgerufen."""
+        return self.register(ToolSpec(
+            name=name, description=description, parameters=parameters,
+            engine="wasm", wasm_source=wasm_source,
+            wasm_policy=wasm_policy or WasmSandboxPolicy(), side_effects=side_effects,
+        ))
+
     def get(self, name: str) -> ToolSpec | None:
         return self._specs.get(name)
 
@@ -160,16 +207,27 @@ class ToolRegistry:
                 "parameters": spec.parameters,
                 "sandboxed": spec.sandboxed,
                 "side_effects": spec.side_effects,
-                "limits": {
-                    "wall_timeout_s": spec.policy.wall_timeout_s,
-                    "cpu_seconds": spec.policy.cpu_seconds,
-                    "memory_mib": spec.policy.memory_bytes // (1024 * 1024),
-                    "allow_network": spec.policy.allow_network,
-                },
+                "engine": spec.engine,
+                "limits": self._describe_limits(spec),
             }
             for name in self.names()
             for spec in [self._specs[name]]
         ]
+
+    @staticmethod
+    def _describe_limits(spec: ToolSpec) -> dict[str, Any]:
+        if spec.engine == "wasm":
+            return {
+                "wall_timeout_s": spec.wasm_policy.wall_timeout_s,
+                "fuel": spec.wasm_policy.fuel,
+                "memory_kib": spec.wasm_policy.max_memory_bytes // 1024,
+            }
+        return {
+            "wall_timeout_s": spec.policy.wall_timeout_s,
+            "cpu_seconds": spec.policy.cpu_seconds,
+            "memory_mib": spec.policy.memory_bytes // (1024 * 1024),
+            "allow_network": spec.policy.allow_network,
+        }
 
 
 # -- Builtins -----------------------------------------------------------------

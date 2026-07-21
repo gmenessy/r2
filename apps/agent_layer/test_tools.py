@@ -8,10 +8,12 @@ from brainfump import BrainFumpKernel
 from apps.agent_layer.tools import (
     ToolError,
     ToolRegistry,
+    ToolSpec,
     builtin_registry,
     safe_calc,
     validate_args,
 )
+from apps.agent_layer.wasm_sandbox import WasmSandboxPolicy
 
 SCHEMA = {
     "type": "object",
@@ -134,3 +136,55 @@ def test_describe_exposes_limits() -> None:
     calc = next(d for d in described if d["name"] == "calc")
     assert calc["sandboxed"] and calc["limits"]["allow_network"] is False
     assert calc["limits"]["wall_timeout_s"] == 3.0
+    assert calc["engine"] == "python"
+
+
+# -- WASM-Engine (Path A) — Registrierung/Beschreibung, keine wasmtime-Ausführung ---
+
+ADD_WAT = """
+(module
+  (func (export "run") (param $a i64) (param $b i64) (result i64)
+    local.get $a
+    local.get $b
+    i64.add))
+"""
+WASM_SCHEMA = {"type": "object",
+               "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}}
+
+
+def test_python_tool_requires_handler() -> None:
+    with pytest.raises(ToolError, match="requires a handler"):
+        ToolSpec(name="x", description="d", parameters=SCHEMA, handler=None)
+
+
+def test_wasm_tool_requires_wasm_source() -> None:
+    with pytest.raises(ToolError, match="requires wasm_source"):
+        ToolSpec(name="x", description="d", parameters=WASM_SCHEMA, engine="wasm")
+
+
+def test_unknown_engine_rejected() -> None:
+    with pytest.raises(ToolError, match="unknown engine"):
+        ToolSpec(name="x", description="d", parameters=SCHEMA, handler=lambda: None,
+                engine="quantum")
+
+
+def test_register_wasm() -> None:
+    registry = ToolRegistry()
+    spec = registry.register_wasm("wasm_add", "Add two integers via WASM.", WASM_SCHEMA,
+                                  ADD_WAT, wasm_policy=WasmSandboxPolicy(fuel=10_000))
+    assert spec.engine == "wasm" and spec.wasm_source == ADD_WAT
+    assert spec.wasm_policy.fuel == 10_000
+    assert registry.get("wasm_add") is spec
+    schema = registry.openai_tools()[0]
+    assert schema["function"]["name"] == "wasm_add"  # OpenAI-Schema identisch zu Python-Tools
+
+
+def test_describe_shows_wasm_limits_not_sandbox_policy() -> None:
+    registry = ToolRegistry()
+    registry.register_wasm("wasm_add", "d", WASM_SCHEMA, ADD_WAT,
+                           wasm_policy=WasmSandboxPolicy(fuel=42, wall_timeout_s=1.5,
+                                                         max_memory_bytes=2048))
+    described = registry.describe()[0]
+    assert described["engine"] == "wasm"
+    assert described["limits"] == {"wall_timeout_s": 1.5, "fuel": 42, "memory_kib": 2}
+    assert "cpu_seconds" not in described["limits"]  # keine Fork-Sandbox-Felder

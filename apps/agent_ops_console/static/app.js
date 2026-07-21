@@ -126,6 +126,12 @@ function toolLine(p) {
     cls = "tool-fail";
     verdict = `<span class="verdict">⏱ ${esc(sandbox.exit_reason || "error")}</span>`;
   }
+  // Engine sichtbar machen — wasm (Path A, Mikrosekunden) vs. fork (Millisekunden).
+  if (sandbox.engine === "wasm") {
+    verdict += `<span class="verdict wasm">⚡ wasm · ${sandbox.duration_ms}ms</span>`;
+  } else if (sandbox.engine === "fork") {
+    verdict += `<span class="verdict">🔒 fork · ${sandbox.duration_ms}ms</span>`;
+  }
   const detail = outcome.ok ? JSON.stringify(outcome.value) : outcome.error || "";
   return { cls, icon: "🛠️", label: `Tool ${p.tool}`, verdict, detail: `${JSON.stringify(p.args)} → ${detail}` };
 }

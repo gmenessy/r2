@@ -148,7 +148,7 @@ Auf dem Kernel aufbauende Subprojekte, ausgeliefert über Docker Compose:
 | [`apps/memory_cockpit`](apps/memory_cockpit/) | 8050 | 🧭 **One More Thing**: Cognitive Core sichtbar gemacht — interaktiver Wissensgraph, Provenienz, Live-Gatekeeper |
 | [`apps/agent_layer`](apps/agent_layer/) | 8060 | ⚙️ **Agent Execution Layer**: ReAct-Runtime mit Prozess-Sandbox fürs Tool Calling, Billing (API-Keys, Token-Ledger, Budgets), xAI-Traces; LLM via vLLM (OpenAI-kompatibel, z. B. gemini4-31B) |
 | [`apps/agent_flightdeck`](apps/agent_flightdeck/) | 8070 | 🛫 **Agent Flightdeck**: Demo-App (Spesen-Agent) + Live-Cockpit des Agent Layer — vier Ein-Klick-Szenarien (Sandbox-Timeout, Gatekeeper-Block, Budget-Stopp), Trace-Timeline, xAI-Narrativ; läuft offline via SimulatedLLM |
-| [`apps/agent_ops_console`](apps/agent_ops_console/) | 8080 | 📡 **Agent Ops Console**: zweite Demo-App (SRE-Agent) — macht Async-Runs, SSE-Live-Streaming und Rate-Limit-Backpressure sichtbar; Live-Feed statt Trace-Timeline, läuft offline via SimulatedLLM |
+| [`apps/agent_ops_console`](apps/agent_ops_console/) | 8080 | 📡 **Agent Ops Console**: zweite Demo-App (SRE-Agent) — macht Async-Runs, SSE-Live-Streaming, Rate-Limit-Backpressure und WASM-Code-Execution (Path A) sichtbar; Live-Feed statt Trace-Timeline, läuft offline via SimulatedLLM |
 
 ```bash
 docker compose up -d          # alle acht Apps
@@ -162,7 +162,8 @@ Jeder Service bietet `GET /api/health` (für den Docker-`HEALTHCHECK`) und
 
 ```bash
 pip install -e ".[dev]"
-python3 -m pytest --cov      # 365 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~95,9 %)
+python3 -m pytest --cov      # 385 Tests, Branch-Coverage-Gate (fail_under=85; aktuell ~96,0 %)
+pip install .[wasm]          # optional: aktiviert die WASM-Sandbox (Path A)
 python3 scripts/measure_footprint.py   # Leichtgewicht-Gate (Charter §2)
 python3 -m pyflakes brainfump apps
 ```

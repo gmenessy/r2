@@ -5,10 +5,12 @@ from __future__ import annotations
 import pytest
 
 from brainfump import BrainFumpKernel
+from apps.agent_layer import wasm_sandbox as ws
 from apps.agent_layer.billing import BillingLedger, BudgetExceededError
 from apps.agent_layer.llm import ChatResult, LLMError, ToolCall
 from apps.agent_layer.runtime import AgentRuntime
-from apps.agent_layer.tools import builtin_registry
+from apps.agent_layer.tools import ToolRegistry, builtin_registry
+from apps.agent_layer.wasm_sandbox import WasmUnavailableError, wasm_available
 from apps.agent_layer.xai import TraceStore
 
 
@@ -250,3 +252,78 @@ def test_budget_error_outside_runtime_still_raises() -> None:
     ledger.create_key("t", budget_usd=0.0)
     with pytest.raises(BudgetExceededError):
         ledger.charge_tool("t", "r", "calc")
+
+
+# -- WASM-Engine (Path A) — End-to-End über den ReAct-Loop ------------------------
+
+ADD_WAT = """
+(module
+  (func (export "run") (param $a i64) (param $b i64) (result i64)
+    local.get $a
+    local.get $b
+    i64.add))
+"""
+WASM_SCHEMA = {"type": "object",
+               "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}}
+
+
+def _wasm_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register_wasm("wasm_add", "Add two integers via WASM.", WASM_SCHEMA, ADD_WAT)
+    return registry
+
+
+@pytest.mark.skipif(not wasm_available(), reason="wasmtime not installed — pip install .[wasm]")
+def test_wasm_tool_runs_end_to_end_through_react_loop() -> None:
+    traces = TraceStore()
+    runtime = AgentRuntime(
+        llm=FakeLLM([_tool_call("wasm_add", {"a": 19, "b": 23}), _answer("42")]),
+        registry=_wasm_registry(), traces=traces,
+    )
+    result = runtime.run("addiere 19 und 23")
+    assert result.status == "ok" and result.tool_calls == 1
+
+    step = next(s["payload"] for s in traces.trace(result.run_id)["steps"]
+                if s["kind"] == "tool_call")
+    assert step["sandbox"]["engine"] == "wasm"
+    assert step["sandbox"]["exit_reason"] == "ok"
+    assert step["outcome"]["value"] == {"result": 42}
+
+
+@pytest.mark.skipif(not wasm_available(), reason="wasmtime not installed — pip install .[wasm]")
+def test_wasm_tool_respects_gatekeeper_before_execution() -> None:
+    """F4-Konsistenz: das Gate greift VOR jeder Engine, auch WASM."""
+    kernel = BrainFumpKernel(None)
+    kernel.record("policy_violation", "wasm_add verboten",
+                  payload={"forbidden_actions": ["wasm_add"]})
+    traces = TraceStore()
+    runtime = AgentRuntime(
+        llm=FakeLLM([_tool_call("wasm_add", {"a": 1, "b": 2}), _answer("blockiert")]),
+        registry=_wasm_registry(), traces=traces, kernel=kernel,
+    )
+    result = runtime.run("x", case_id="a")
+    step = next(s["payload"] for s in traces.trace(result.run_id)["steps"]
+                if s["kind"] == "tool_call")
+    assert step["gate"]["allowed"] is False
+    assert "sandbox" not in step  # nie ausgeführt, auch nicht in der WASM-Sandbox
+
+
+def test_wasm_tool_fails_gracefully_when_wasmtime_unavailable(monkeypatch) -> None:
+    """Läuft OHNE installiertes wasmtime — testet genau den Fallback-Pfad."""
+    def _raise() -> None:
+        raise WasmUnavailableError("wasmtime not installed")
+
+    monkeypatch.setattr(ws, "_load_wasmtime", _raise)
+    traces = TraceStore()
+    runtime = AgentRuntime(
+        llm=FakeLLM([_tool_call("wasm_add", {"a": 1, "b": 2}), _answer("kein wasmtime")]),
+        registry=_wasm_registry(), traces=traces,
+    )
+    result = runtime.run("x")
+    assert result.status == "ok"  # der Run selbst überlebt den fehlenden Engine
+    step = next(s["payload"] for s in traces.trace(result.run_id)["steps"]
+                if s["kind"] == "tool_call")
+    assert step["outcome"]["ok"] is False
+    assert "wasmtime" in step["outcome"]["error"]
+    with pytest.raises(WasmUnavailableError):
+        runtime._get_wasm_sandbox()

@@ -79,6 +79,7 @@ class SandboxResult:
             "duration_ms": round(self.duration_ms, 2),
             "hardened": self.hardened,
             "dropped_privileges": self.dropped_privileges,
+            "engine": "fork",  # Gegenstück zu WasmSandboxResult.to_dict()["engine"]
         }
 
 

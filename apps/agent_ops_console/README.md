@@ -5,19 +5,22 @@ Plattform bei der Arbeit live verfolgen, während sie läuft.**
 
 Während das [Flightdeck](../agent_flightdeck/) die *Fundamente* zeigt
 (Sandbox, Gatekeeper, Budget, xAI im synchronen Modus), macht die Ops
-Console genau die Sprint-4/5-Fähigkeiten sichtbar, die bisher nur per
-curl/Tests verifiziert waren: **asynchrone Runs, Live-Streaming,
-Backpressure.** Domäne: ein SRE-Agent für Incident-Response.
+Console genau die Sprint-4/5- und Path-A-Fähigkeiten sichtbar, die bisher
+nur per curl/Tests verifiziert waren: **asynchrone Runs, Live-Streaming,
+Backpressure, WASM-Code-Execution.** Domäne: ein SRE-Agent für
+Incident-Response.
 
 | Szenario | Was es zeigt |
 |---|---|
-| 🔴 **Live Triage** | Async-Run (`202` + `run_id`, kein blockierender Request) — der Trace strömt per Server-Sent Events live rein, während der Agent `check_health` und `scale_up` ausführt |
+| 🔴 **Live Triage** | Async-Run (`202` + `run_id`, kein blockierender Request) — der Trace strömt per Server-Sent Events live rein, während der Agent `check_health` ausführt, den Schweregrad in der **WASM-Sandbox** berechnet (`severity_score`, ~80× schneller als Fork) und `scale_up` aufruft |
 | 🛑 **Change Freeze** | Governance verbietet `restart_service` während des Quartalsabschlusses — geblockt **vor** der Ausführung; der Agent weicht auf `page_oncall` aus |
 | 🐝 **Noisy Neighbor** | Mehrfach schnell ausgelöst: sobald der Token-Bucket leer ist, antwortet die Plattform mit `429` + `Retry-After` statt unbegrenzt zu puffern |
 
-Die Fach-Tools (`check_health`, `scale_up`, `restart_service`, `page_oncall`)
-sind ~50 Zeilen in [`console.py`](console.py) — dasselbe Versprechen wie
-beim Flightdeck: Tools registrieren, fertig.
+Die Fach-Tools (`check_health`, `scale_up`, `restart_service`, `page_oncall`,
+`severity_score`) sind ~65 Zeilen in [`console.py`](console.py) — dasselbe
+Versprechen wie beim Flightdeck: Tools registrieren, fertig. Der Live-Feed
+zeigt für jeden Tool-Call die tatsächliche Engine (`fork` vs. `wasm`) samt
+Laufzeit — die Sandbox-Wahl ist beobachtbar, nicht nur ein interner Kniff.
 
 ## Live-Feed statt Timeline
 

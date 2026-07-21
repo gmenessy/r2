@@ -13,6 +13,7 @@ import pytest
 from brainfump import BrainFumpKernel
 from apps.agent_layer.billing import BillingLedger
 from apps.agent_layer.ratelimit import RateLimiter
+from apps.agent_layer.wasm_sandbox import wasm_available
 from apps.agent_layer.xai import TraceStore
 from apps.agent_ops_console.console import (
     TENANT,
@@ -23,6 +24,9 @@ from apps.agent_ops_console.console import (
     scale_up,
 )
 from apps.agent_ops_console.server import create_server
+
+_needs_wasm = pytest.mark.skipif(not wasm_available(),
+                                 reason="wasmtime not installed — pip install .[wasm]")
 
 
 @pytest.fixture()
@@ -68,6 +72,7 @@ def test_scale_up_and_restart_and_page() -> None:
 
 # -- Szenarien -------------------------------------------------------------------
 
+@_needs_wasm
 def test_live_triage_runs_async_and_completes(console: OpsConsole) -> None:
     submitted = console.run_scenario("live_triage")
     assert submitted["async"] is True and submitted["status"] == "queued"
@@ -76,8 +81,16 @@ def test_live_triage_runs_async_and_completes(console: OpsConsole) -> None:
     state = _wait_done(console, submitted["run_id"])
     assert state["result"]["status"] == "ok"
     steps = _tool_steps(console, submitted["run_id"])
-    assert [s["tool"] for s in steps] == ["check_health", "scale_up"]
+    assert [s["tool"] for s in steps] == ["check_health", "severity_score", "scale_up"]
     assert all(s["sandbox"]["exit_reason"] == "ok" for s in steps if "sandbox" in s)
+
+    # severity_score lief in der WASM-Sandbox (Path A), nicht im Fork-Kindprozess.
+    severity_step = next(s for s in steps if s["tool"] == "severity_score")
+    assert severity_step["sandbox"]["engine"] == "wasm"
+    assert severity_step["outcome"]["value"] == {"result": 42 + 24}  # 420/10 + 12*2
+
+    check_health_step = next(s for s in steps if s["tool"] == "check_health")
+    assert check_health_step["sandbox"]["engine"] == "fork"
 
 
 def test_change_freeze_blocks_restart_but_pages_oncall(console: OpsConsole) -> None:

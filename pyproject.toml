@@ -7,6 +7,11 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "pyflakes"]
+# Path A (Leichtgewicht-Analyse, docs/PLATFORM_CHARTER.md): WASM-Sandbox für
+# apps/agent_layer — ~80x schneller als der Fork-Sandbox für reine numerische
+# Tools. Bewusst optional: die Plattform läuft ohne dieses Extra unverändert
+# (0 Pflicht-Abhängigkeiten bleibt gewahrt).
+wasm = ["wasmtime"]
 
 [build-system]
 requires = ["setuptools>=68"]

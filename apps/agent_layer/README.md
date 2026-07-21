@@ -206,6 +206,33 @@ verteilter DB** (keine neue Abhängigkeit, Charter §5):
   als Protocol — ein Postgres-Adapter wäre ein optionales Extra hinter dieser
   Naht, bewusst nicht im Kern.
 
+## WASM-Sandbox — Code-Execution ohne Fork (Path A)
+
+Zweiter Tool-Engine neben der Fork-Sandbox, für reine numerische Tools
+**~80× schneller** (Mikro- statt Millisekunden) und mit echtem
+Capability-Sandboxing (kein Import verlinkt → keine Ambient Authority).
+Details, Sicherheitsmodell und Benchmarks:
+[`docs/PATH_A_WASM_SANDBOX.md`](../../docs/PATH_A_WASM_SANDBOX.md).
+
+```bash
+pip install .[wasm]   # optional — die Plattform läuft auch ohne
+```
+
+```python
+registry.register_wasm(
+    "severity_score", "Compute an SLO severity score.",
+    {"type": "object", "properties": {
+        "latency_ms": {"type": "integer"}, "error_permille": {"type": "integer"},
+    }},
+    wasm_source=SEVERITY_WAT,  # WAT-Text oder kompilierte .wasm-Bytes
+)
+```
+
+Ohne installiertes `wasmtime` meldet ein WASM-Tool beim Aufruf eine klare
+Fehlermeldung statt die Plattform zum Absturz zu bringen — der `import
+wasmtime`-Versuch selbst ist lazy (erst bei tatsächlichem Bedarf), damit das
+Extra wirklich optional bleibt und nicht in jedem Prozess ungefragt lädt.
+
 ## Performance-Entscheidungen
 
 - **Keine externen Abhängigkeiten**: Stdlib + SQLite (WAL) — Containerstart

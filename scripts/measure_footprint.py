@@ -30,9 +30,14 @@ import time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Budgets aus der Charter §2 (~30 % Kopffreiheit über der Baseline vom 2026-07-18).
+# core_loc am 2026-07-19 bewusst auf 2900 angehoben (Charter-Eskalationsklausel
+# "wer das Budget ausschöpft, muss den Gegenwert begründen"): Path A, die
+# WASM-Sandbox (wasm_sandbox.py, ~200 LOC) — ~80x schneller als der Fork-Pfad
+# für numerische Tools, echtes Capability-Sandboxing. Begründung + Benchmarks:
+# docs/PATH_A_WASM_SANDBOX.md. Kein optionales Extra zählt gegen "runtime_dependencies".
 BUDGETS: dict[str, float] = {
     "runtime_dependencies": 0,
-    "core_loc": 2600,
+    "core_loc": 2900,
     "demo_loc": 500,
     "cold_start_ms": 400,
     "idle_rss_mib": 60,

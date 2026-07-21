@@ -9,7 +9,9 @@ ReAct-Schleife (Reason → Act → Observe) mit vier harten Querschnitten:
    (Pre-Action Gate); geblocktes wird nie ausgeführt, sondern dem Modell als
    Verweigerung zurückgemeldet.
 3. **Sandbox**: Ausführung untrusted Tools nur im rlimit-gedeckelten
-   Kindprozess (:mod:`apps.agent_layer.sandbox`).
+   Kindprozess (:mod:`apps.agent_layer.sandbox`) — oder, für reine
+   numerische ``engine="wasm"``-Tools, in der ~80× schnelleren
+   :class:`~apps.agent_layer.wasm_sandbox.WasmSandbox` (Path A, optional).
 4. **Billing + xAI**: Jeder LLM-/Tool-Schritt wird bepreist und getract;
    ein erschöpftes Budget stoppt den Run deterministisch.
 """
@@ -31,6 +33,7 @@ from apps.agent_layer.llm import (
 )
 from apps.agent_layer.sandbox import ProcessSandbox
 from apps.agent_layer.tools import ToolRegistry, ToolSpec, validate_args
+from apps.agent_layer.wasm_sandbox import WasmSandbox, WasmUnavailableError
 from apps.agent_layer.xai import TraceStore
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -70,6 +73,7 @@ class AgentRuntime:
         kernel: Any | None = None,
         ledger: BillingLedger | None = None,
         sandbox: ProcessSandbox | None = None,
+        wasm_sandbox: WasmSandbox | None = None,
         max_steps: int = 6,
         memory_k: int = 3,
         max_tokens: int = 1024,
@@ -81,10 +85,19 @@ class AgentRuntime:
         self.kernel = kernel
         self.ledger = ledger
         self.sandbox = sandbox or ProcessSandbox()
+        # Lazy: WasmSandbox() erfordert wasmtime (optionales Extra) — nur
+        # instanziieren, wenn tatsächlich ein wasm-Tool aufgerufen wird, damit
+        # die Plattform ohne wasmtime unverändert lauffähig bleibt.
+        self._wasm_sandbox = wasm_sandbox
         self.max_steps = max_steps
         self.memory_k = memory_k
         self.max_tokens = max_tokens
         self.system_prompt = system_prompt
+
+    def _get_wasm_sandbox(self) -> WasmSandbox:
+        if self._wasm_sandbox is None:
+            self._wasm_sandbox = WasmSandbox()
+        return self._wasm_sandbox
 
     # -- Öffentliche API ------------------------------------------------------
 
@@ -250,7 +263,20 @@ class AgentRuntime:
         return outcome
 
     def _invoke(self, spec: ToolSpec, arguments: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Sandboxed im Kindprozess; Plattform-Tools (Memory) trusted inline."""
+        """Sandboxed im Kindprozess, in der WASM-Sandbox (Path A) oder —
+        für Plattform-Tools (Memory) — trusted inline."""
+        if spec.engine == "wasm":
+            try:
+                wasm_sandbox = self._get_wasm_sandbox()
+            except WasmUnavailableError as exc:
+                return ({"exit_reason": "compile_error", "engine": "wasm"},
+                        {"ok": False, "error": str(exc)})
+            result = wasm_sandbox.run(spec.wasm_source, arguments, spec.parameters,
+                                      spec.wasm_policy)
+            report = result.to_dict()
+            outcome = ({"ok": True, "value": result.value} if result.ok
+                       else {"ok": False, "error": result.error})
+            return report, outcome
         if spec.sandboxed:
             result = self.sandbox.run(spec.handler, arguments, spec.policy)
             report = result.to_dict()

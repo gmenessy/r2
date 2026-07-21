@@ -48,6 +48,7 @@ from apps.agent_layer.runtime import AgentRuntime  # noqa: E402
 from apps.agent_layer.sharding import ShardManifest  # noqa: E402
 from apps.agent_layer.streaming import trace_sse_events  # noqa: E402
 from apps.agent_layer.tools import builtin_registry  # noqa: E402
+from apps.agent_layer.wasm_sandbox import wasm_available  # noqa: E402
 from apps.agent_layer.xai import TraceStore  # noqa: E402
 
 
@@ -211,7 +212,8 @@ def build_app(runtime: AgentRuntime, ledger: BillingLedger, traces: TraceStore,
     @app.get("/api/tools")
     def _tools(_: Request) -> dict:
         return {"tools": runtime.registry.describe(),
-                "sandbox_hardened": runtime.sandbox.hardened}
+                "sandbox_hardened": runtime.sandbox.hardened,
+                "wasm_available": wasm_available()}
 
     @app.get("/api/shards")
     def _shards(_: Request) -> dict:
